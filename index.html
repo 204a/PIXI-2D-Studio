@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简单2D游戏引擎 - 基于PixiJS</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            overflow: hidden;
+            background: #1a1a1a;
+        }
+        
+        /* 防止内容闪烁 - 默认隐藏应用 */
+        #app {
+            display: flex;
+            height: 100vh;
+            visibility: hidden;
+        }
+        
+        /* JavaScript加载后显示 */
+        #app.loaded {
+            visibility: visible;
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        /* 加载动画 */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #1a1a1a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            color: #fff;
+            transition: opacity 0.3s ease-out;
+        }
+        
+        .loading-overlay.fade-out {
+            opacity: 0;
+        }
+        
+        .loading-content {
+            text-align: center;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #333;
+            border-top-color: #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* 左侧工具栏 */
+        .sidebar {
+            width: 280px;
+            min-width: 280px;
+            background: #252525;
+            color: #fff;
+            padding: 20px;
+            overflow-y: auto;
+            border-right: 1px solid #333;
+        }
+        
+        .sidebar h2 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+            font-weight: 600;
+        }
+        
+        .component-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .component-item {
+            background: #333;
+            padding: 12px 15px;
+            border-radius: 4px;
+            cursor: move;
+            transition: all 0.2s;
+            border: 1px solid #444;
+            font-size: 14px;
+        }
+        
+        .component-item:hover {
+            background: #3a3a3a;
+            border-color: #555;
+            transform: translateX(5px);
+        }
+        
+        /* 中间画布区域 */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            background: #2a2a2a;
+        }
+        
+        #game-canvas {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+        
+        #game-canvas canvas {
+            display: block;
+        }
+        
+        /* 右侧属性面板 */
+        .properties-panel {
+            width: 300px;
+            min-width: 300px;
+            background: #252525;
+            color: #fff;
+            padding: 20px;
+            overflow-y: auto;
+            border-left: 1px solid #333;
+        }
+        
+        .properties-panel h2 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+            font-weight: 600;
+        }
+        
+        .property-group {
+            margin-bottom: 20px;
+        }
+        
+        .property-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            color: #aaa;
+        }
+        
+        .property-group input {
+            width: 100%;
+            padding: 10px;
+            background: #333;
+            border: 1px solid #444;
+            color: #fff;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        
+        .property-group input:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+        
+        /* 顶部工具栏 */
+        .toolbar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(37, 37, 37, 0.9);
+            padding: 10px;
+            border-radius: 4px;
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
+        
+        .toolbar button {
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .toolbar button:hover {
+            background: #45a049;
+        }
+        
+        .toolbar button.secondary {
+            background: #2196F3;
+        }
+        
+        .toolbar button.secondary:hover {
+            background: #0b7dda;
+        }
+        
+        /* 状态栏 */
+        .status-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(37, 37, 37, 0.9);
+            padding: 8px 20px;
+            color: #aaa;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+    <!-- 加载动画 -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div style="font-size: 16px; color: #aaa;">加载中...</div>
+        </div>
+    </div>
+    
+    <div id="app">
+        <!-- 左侧组件库 -->
+        <div class="sidebar">
+            <h2>🎮 组件库</h2>
+            <div class="component-list">
+                <div class="component-item" data-type="sprite">
+                    📦 精灵 (Sprite)
+                </div>
+                <div class="component-item" data-type="text">
+                    📝 文本 (Text)
+                </div>
+                <div class="component-item" data-type="rectangle">
+                    ⬜ 矩形 (Rectangle)
+                </div>
+                <div class="component-item" data-type="circle">
+                    ⭕ 圆形 (Circle)
+                </div>
+                <div class="component-item" data-type="container">
+                    📁 容器 (Container)
+                </div>
+            </div>
+            
+            <h2 style="margin-top: 30px;">🎯 场景对象</h2>
+            <div id="scene-objects" style="font-size: 14px; color: #aaa;">
+                <p style="padding: 10px 0;">暂无对象</p>
+            </div>
+
+            <h2 style="margin-top: 30px;">🔊 音频资源</h2>
+            <p style="font-size: 12px; color: #888; margin-bottom: 8px;">mp3 / wav / ogg，事件里可「播放音效」「播放背景音乐」</p>
+            <input type="file" id="audio-file-input" accept="audio/*" multiple style="display: none;">
+            <button type="button" id="btn-audio-upload" style="width: 100%; padding: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-bottom: 10px;">上传音频</button>
+            <div id="audio-list" style="font-size: 13px; color: #aaa;"></div>
+        </div>
+        
+        <!-- 中间画布区域 -->
+        <div class="canvas-container">
+            <div class="toolbar">
+                <button id="btn-play">▶ 运行</button>
+                <button id="btn-stop" class="secondary">⏹ 停止</button>
+                <button id="btn-clear" class="secondary">🗑️ 清空</button>
+                <button id="btn-export" class="secondary">💾 导出</button>
+                <input type="file" id="scene-import-input" accept=".json,application/json" style="display: none;">
+                <button id="btn-import" class="secondary" type="button">📂 导入</button>
+            </div>
+            <div id="game-canvas"></div>
+            <div class="status-bar">
+                <span id="status-text">就绪</span>
+                <span id="fps-counter">FPS: 0</span>
+            </div>
+        </div>
+        
+        <!-- 右侧属性面板 -->
+        <div class="properties-panel">
+            <h2>⚙️ 属性面板</h2>
+            <div id="properties-content">
+                <p style="color: #666; padding: 20px 0;">选择一个对象查看属性</p>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module" src="/src/main.js?v=<?php echo time(); ?>"></script>
+    <script>
+        // 强制清除缓存
+        if ('caches' in window) {
+            caches.keys().then(names => {
+                names.forEach(name => caches.delete(name));
+            });
+        }
+    </script>
+</body>
+</html>
+
