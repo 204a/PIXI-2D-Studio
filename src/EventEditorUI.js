@@ -372,7 +372,9 @@ export class EventEditorUI {
                             <option value="mouseY">鼠标Y坐标</option>
                         </optgroup>
                         <optgroup label="碰撞">
-                            <option value="collision">碰撞检测</option>
+                            <option value="collision">碰撞检测（持续）</option>
+                            <option value="collisionEnter">碰撞进入（仅首次接触）</option>
+                            <option value="physicsCollisionEnter">物理碰撞进入（Matter）</option>
                         </optgroup>
                     </select>
                 </div>
@@ -449,13 +451,15 @@ export class EventEditorUI {
                         </div>
                     `;
                 }
-            } else if (type === 'collision') {
+            } else if (type === 'collision' || type === 'collisionEnter' || type === 'physicsCollisionEnter') {
                 // 碰撞条件
                 paramsDiv.innerHTML = `
                     <div style="margin-bottom: 10px;">
                         <label style="color: #aaa; font-size: 13px;">碰撞目标标签</label>
                         <input type="text" id="cond-tag" placeholder="如：enemy, platform" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
-                        <small style="color: #666; font-size: 11px; display: block; margin-top: 3px;">在对象属性中设置标签</small>
+                        <small style="color: #666; font-size: 11px; display: block; margin-top: 3px;">
+                            在对象属性中设置标签；普通碰撞支持 AABB/圆形；物理碰撞需开启刚体
+                        </small>
                     </div>
                 `;
             } else {
@@ -491,7 +495,7 @@ export class EventEditorUI {
                 
                 if (type.startsWith('key')) {
                     condition.key = overlay.querySelector('#cond-key').value;
-                } else if (type === 'collision') {
+                } else if (type === 'collision' || type === 'collisionEnter' || type === 'physicsCollisionEnter') {
                     condition.tag = overlay.querySelector('#cond-tag').value;
                 } else if (type === 'mouseClicked') {
                     // 无参数
@@ -556,6 +560,11 @@ export class EventEditorUI {
                             <option value="playMusic">播放背景音乐</option>
                             <option value="stopMusic">停止背景音乐</option>
                         </optgroup>
+                        <optgroup label="界面">
+                            <option value="setText">设置文本</option>
+                            <option value="setProgress">设置进度条 (0–1)</option>
+                            <option value="setScrollY">设置滚动视图 scrollY</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div id="action-params"></div>
@@ -609,6 +618,36 @@ export class EventEditorUI {
                 return;
             }
 
+            if (type === 'setText') {
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">文本内容（文本/按钮/输入框）</label>
+                        <input type="text" id="action-settext-val" value="" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                    </div>
+                `;
+                return;
+            }
+
+            if (type === 'setProgress') {
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">进度 0 ~ 1</label>
+                        <input type="number" id="action-progress-val" min="0" max="1" step="0.05" value="0.5" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                    </div>
+                `;
+                return;
+            }
+
+            if (type === 'setScrollY') {
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">scrollY（像素）</label>
+                        <input type="number" id="action-scrollY-val" value="0" step="10" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                    </div>
+                `;
+                return;
+            }
+
             const configs = {
                 'move': [['deltaX', 'X移动', 5], ['deltaY', 'Y移动', 0]],
                 'setPosition': [['x', 'X坐标', 100], ['y', 'Y坐标', 100]],
@@ -657,6 +696,17 @@ export class EventEditorUI {
                 } else if (type === 'stopMusic') {
                     const fo = overlay.querySelector('#action-stopmusic-fade');
                     params.fadeOut = fo ? parseFloat(fo.value) || 0 : 0;
+                } else if (type === 'setText') {
+                    const el = overlay.querySelector('#action-settext-val');
+                    params.text = el ? el.value : '';
+                } else if (type === 'setProgress') {
+                    const el = overlay.querySelector('#action-progress-val');
+                    params.value = el ? parseFloat(el.value) : 0;
+                    if (Number.isNaN(params.value)) params.value = 0;
+                } else if (type === 'setScrollY') {
+                    const el = overlay.querySelector('#action-scrollY-val');
+                    params.scrollY = el ? parseFloat(el.value) : 0;
+                    if (Number.isNaN(params.scrollY)) params.scrollY = 0;
                 } else {
                     overlay.querySelectorAll('#action-params input').forEach(input => {
                         params[input.name] = parseFloat(input.value) || 0;
@@ -687,7 +737,9 @@ export class EventEditorUI {
             'mouseHover': '🖱️ 鼠标悬停',
             'mouseX': '🖱️ 鼠标X',
             'mouseY': '🖱️ 鼠标Y',
-            'collision': '💥 碰撞'
+            'collision': '💥 碰撞',
+            'collisionEnter': '💥 碰撞进入',
+            'physicsCollisionEnter': '🧱 物理碰撞进入'
         };
         
         if (c.type.startsWith('key')) {
@@ -705,8 +757,14 @@ export class EventEditorUI {
             return `⌨️ ${names[c.type]}: ${keyNames[c.key] || c.key}`;
         }
         
-        if (c.type === 'collision') {
-            return `💥 碰撞: ${c.tag || '任意'}`;
+        if (c.type === 'collision' || c.type === 'collisionEnter' || c.type === 'physicsCollisionEnter') {
+            const lab =
+                c.type === 'physicsCollisionEnter'
+                    ? '物理碰撞进入'
+                    : c.type === 'collisionEnter'
+                        ? '碰撞进入'
+                        : '碰撞';
+            return `💥 ${lab}: ${c.tag || '任意'}`;
         }
         
         if (c.type === 'mouseClicked' || c.type === 'mouseDown' || c.type === 'mouseReleased' || c.type === 'mouseHover') {
@@ -747,7 +805,10 @@ export class EventEditorUI {
             'stopTween': '⏹ 停止补间',
             'playSound': `🔊 音效: ${a.params.name || '?'} (音量${a.params.volume ?? 1})`,
             'playMusic': `🎵 音乐: ${a.params.name || '?'} (音量${a.params.volume ?? 0.7})`,
-            'stopMusic': `⏹ 停音乐 (淡出 ${a.params.fadeOut ?? 0}s)`
+            'stopMusic': `⏹ 停音乐 (淡出 ${a.params.fadeOut ?? 0}s)`,
+            'setText': `📝 文本: ${a.params.text ?? ''}`,
+            'setProgress': `📊 进度: ${a.params.value ?? 0}`,
+            'setScrollY': `🧾 scrollY: ${a.params.scrollY ?? 0}`
         };
         return formats[a.type] || a.type;
     }

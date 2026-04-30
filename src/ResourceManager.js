@@ -10,6 +10,8 @@ export class ResourceManager {
         this.loadedImages = new Map();
         /** @type {Map<string, string>} 名称 -> dataURL 或 URL */
         this.audioClips = new Map();
+        /** @type {Map<string, string>} 字体显示名 -> CSS font-family 字符串（已加载） */
+        this.fonts = new Map();
     }
     
     /**
@@ -127,6 +129,29 @@ export class ResourceManager {
         this.textures.clear();
         this.loadedImages.clear();
         this.audioClips.clear();
+        this.fonts.clear();
+    }
+
+    /**
+     * 加载本地字体文件（ttf/otf/woff），注册为可用 fontFamily
+     */
+    async loadFontFromFile(file) {
+        const base = file.name.replace(/\.[^.]+$/, '');
+        const family = `SGEFont_${base.replace(/\W/g, '_')}_${Date.now().toString(36)}`;
+        const buf = await file.arrayBuffer();
+        const face = new FontFace(family, buf);
+        await face.load();
+        document.fonts.add(face);
+        this.fonts.set(file.name, family);
+        return { name: file.name, family };
+    }
+
+    getFontFamily(fileName) {
+        return this.fonts.get(fileName);
+    }
+
+    listFonts() {
+        return Array.from(this.fonts.entries()).map(([name, family]) => ({ name, family }));
     }
 }
 

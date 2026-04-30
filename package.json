@@ -8,10 +8,16 @@
     "build": "vite build",
     "preview": "vite preview"
   },
-  "keywords": ["game-engine", "pixi", "visual-editor"],
+  "keywords": [
+    "game-engine",
+    "pixi",
+    "visual-editor"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@pixi/mesh-extras": "^7.4.3",
+    "matter-js": "^0.20.0",
     "pixi.js": "^7.4.2"
   },
   "devDependencies": {

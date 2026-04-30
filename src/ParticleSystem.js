@@ -50,7 +50,8 @@ export class ParticleSystem {
             particlePool: [] // 对象池
         };
         
-        this.engine.app.stage.addChild(emitter.container);
+        const root = this.engine.getWorldContainer?.() ?? this.engine.app.stage;
+        root.addChild(emitter.container);
         this.emitters.push(emitter);
         
         return emitter;
@@ -180,7 +181,8 @@ export class ParticleSystem {
         const index = this.emitters.findIndex(e => e.id === emitterId);
         if (index > -1) {
             const emitter = this.emitters[index];
-            this.engine.app.stage.removeChild(emitter.container);
+            const root = this.engine.getWorldContainer?.() ?? this.engine.app.stage;
+            root.removeChild(emitter.container);
             this.emitters.splice(index, 1);
         }
     }
@@ -189,8 +191,9 @@ export class ParticleSystem {
      * 清空所有粒子
      */
     clear() {
+        const root = this.engine.getWorldContainer?.() ?? this.engine.app.stage;
         this.emitters.forEach(emitter => {
-            this.engine.app.stage.removeChild(emitter.container);
+            root.removeChild(emitter.container);
         });
         this.emitters = [];
     }

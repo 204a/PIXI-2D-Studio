@@ -309,6 +309,11 @@ export class TransformControls {
             height = radius * 2;
         }
 
+        if (['button', 'progressBar', 'inputField', 'nineSlice'].includes(this.selectedObject.type)) {
+            width = props.width || 100;
+            height = props.height || 40;
+        }
+
         return { x, y, width, height };
     }
     
@@ -550,6 +555,28 @@ export class TransformControls {
             // 容器需要特殊处理
             props.width = bounds.width;
             props.height = bounds.height;
+        } else if (['button', 'progressBar', 'inputField'].includes(this.selectedObject.type)) {
+            props.width = bounds.width;
+            props.height = bounds.height;
+            obj.x = bounds.x;
+            obj.y = bounds.y;
+            props.x = bounds.x;
+            props.y = bounds.y;
+            this.engine.updateObjectProperties(this.selectedObject, {
+                width: bounds.width,
+                height: bounds.height,
+                x: bounds.x,
+                y: bounds.y
+            });
+        } else if (this.selectedObject.type === 'nineSlice') {
+            props.width = bounds.width;
+            props.height = bounds.height;
+            obj.x = bounds.x;
+            obj.y = bounds.y;
+            props.x = bounds.x;
+            props.y = bounds.y;
+            obj.width = bounds.width;
+            obj.height = bounds.height;
         }
     }
     

@@ -7,6 +7,109 @@ export class BehaviorSystem {
         this.engine = engine;
         this.behaviors = []; // 所有行为规则
         this.isRunning = false;
+        /** @type {Set<string>} 每帧结束时的碰撞对；下一帧开始复制为基线，供 collisionEnter */
+        this._collisionPairEnd = new Set();
+        /** @type {Set<string>} 本帧“进入碰撞”判定用（上一帧结束时的对） */
+        this._collisionEnterBaseline = new Set();
+    }
+
+    static _pairKey(idA, idB) {
+        return idA < idB ? `${idA}|${idB}` : `${idB}|${idA}`;
+    }
+
+    /** 默认碰撞形状：圆形对象用圆，其余用 AABB（包围盒） */
+    _resolveShape(gameObject) {
+        const p = gameObject.properties;
+        if (p.collisionShape === 'circle' || (!p.collisionShape && gameObject.type === 'circle')) {
+            return 'circle';
+        }
+        if (p.collisionShape === 'aabb') {
+            return 'aabb';
+        }
+        return 'aabb';
+    }
+
+    _circleParams(gameObject) {
+        const obj = gameObject.displayObject;
+        const p = gameObject.properties;
+        const b = obj.getBounds();
+        const cx = b.x + b.width / 2;
+        const cy = b.y + b.height / 2;
+        let r = p.collisionRadius;
+        if (r === undefined || r === null) {
+            if (gameObject.type === 'circle') {
+                const rad = p.radius || 50;
+                const sx = Math.abs(obj.scale?.x ?? 1);
+                const sy = Math.abs(obj.scale?.y ?? 1);
+                r = rad * (sx + sy) / 2;
+            } else {
+                r = Math.min(b.width, b.height) / 2;
+            }
+        }
+        return { cx, cy, r };
+    }
+
+    _aabbFromBounds(gameObject) {
+        const b = gameObject.displayObject.getBounds();
+        return { x: b.x, y: b.y, w: b.width, h: b.height };
+    }
+
+    _rectsOverlap(a, b) {
+        return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    _circleCircle(c1, c2) {
+        const dx = c1.cx - c2.cx;
+        const dy = c1.cy - c2.cy;
+        const rr = c1.r + c2.r;
+        return dx * dx + dy * dy <= rr * rr;
+    }
+
+    _circleAabb(c, r) {
+        const nx = Math.max(r.x, Math.min(c.cx, r.x + r.w));
+        const ny = Math.max(r.y, Math.min(c.cy, r.y + r.h));
+        const dx = c.cx - nx;
+        const dy = c.cy - ny;
+        return dx * dx + dy * dy <= c.r * c.r;
+    }
+
+    /**
+     * 统一碰撞检测：支持 aabb / circle 组合
+     */
+    collides(go1, go2) {
+        if (go1.id === go2.id) return false;
+        const s1 = this._resolveShape(go1);
+        const s2 = this._resolveShape(go2);
+        if (s1 === 'aabb' && s2 === 'aabb') {
+            const a = this._aabbFromBounds(go1);
+            const b = this._aabbFromBounds(go2);
+            return this._rectsOverlap(a, b);
+        }
+        if (s1 === 'circle' && s2 === 'circle') {
+            return this._circleCircle(this._circleParams(go1), this._circleParams(go2));
+        }
+        if (s1 === 'circle' && s2 === 'aabb') {
+            return this._circleAabb(this._circleParams(go1), this._aabbFromBounds(go2));
+        }
+        if (s1 === 'aabb' && s2 === 'circle') {
+            return this._circleAabb(this._circleParams(go2), this._aabbFromBounds(go1));
+        }
+        const a = this._aabbFromBounds(go1);
+        const b = this._aabbFromBounds(go2);
+        return this._rectsOverlap(a, b);
+    }
+
+    _rebuildCollisionPairsEnd() {
+        const pairs = new Set();
+        const objs = this.engine.gameObjects;
+        for (let i = 0; i < objs.length; i++) {
+            for (let j = i + 1; j < objs.length; j++) {
+                if (this.collides(objs[i], objs[j])) {
+                    pairs.add(BehaviorSystem._pairKey(objs[i].id, objs[j].id));
+                }
+            }
+        }
+        this._collisionPairEnd = pairs;
     }
     
     /**
@@ -187,6 +290,15 @@ export class BehaviorSystem {
                 // 碰撞条件
                 case 'collision':
                     return this.checkCollisionWithTag(gameObject, condition.tag);
+
+                case 'collisionEnter':
+                    return this.checkCollisionEnterWithTag(gameObject, condition.tag);
+
+                // 物理碰撞进入（Matter.js）
+                case 'physicsCollisionEnter':
+                    return this.engine.physicsSystem
+                        ? this.engine.physicsSystem.checkCollisionEnterWithTag(gameObject, condition.tag)
+                        : false;
                     
                 default:
                     return true;
@@ -209,31 +321,27 @@ export class BehaviorSystem {
     }
     
     /**
-     * 检查与特定标签对象的碰撞
+     * 检查与特定标签对象的碰撞（持续）
      */
     checkCollisionWithTag(gameObject, tag) {
-        const objects = this.engine.gameObjects.filter(o => o.properties.tag === tag);
-        return objects.some(obj => this.checkAABBCollision(gameObject, obj));
+        const objects = this.engine.gameObjects.filter(
+            (o) => o.properties.tag === tag && o.id !== gameObject.id
+        );
+        return objects.some((obj) => this.collides(gameObject, obj));
     }
-    
+
     /**
-     * AABB碰撞检测
+     * 本帧首次碰到该标签（上一帧未碰撞同一对象）
      */
-    checkAABBCollision(obj1, obj2) {
-        const x1 = obj1.displayObject.x;
-        const y1 = obj1.displayObject.y;
-        const w1 = obj1.properties.width || 50;
-        const h1 = obj1.properties.height || 50;
-        
-        const x2 = obj2.displayObject.x;
-        const y2 = obj2.displayObject.y;
-        const w2 = obj2.properties.width || 50;
-        const h2 = obj2.properties.height || 50;
-        
-        return x1 < x2 + w2 &&
-               x1 + w1 > x2 &&
-               y1 < y2 + h2 &&
-               y1 + h1 > y2;
+    checkCollisionEnterWithTag(gameObject, tag) {
+        const objects = this.engine.gameObjects.filter(
+            (o) => o.properties.tag === tag && o.id !== gameObject.id
+        );
+        return objects.some(
+            (other) =>
+                this.collides(gameObject, other) &&
+                !this._collisionEnterBaseline.has(BehaviorSystem._pairKey(gameObject.id, other.id))
+        );
     }
     
     /**
@@ -288,9 +396,28 @@ export class BehaviorSystem {
                 break;
                 
             case 'setText':
-                if (gameObject.type === 'text' && action.params.text) {
+                if (action.params.text === undefined) break;
+                if (gameObject.type === 'text') {
                     obj.text = action.params.text;
                     props.text = action.params.text;
+                } else if (gameObject.type === 'button' && gameObject._buttonLabel) {
+                    gameObject._buttonLabel.text = action.params.text;
+                    props.label = action.params.text;
+                } else if (gameObject.type === 'inputField' && gameObject._inputText) {
+                    gameObject._inputText.text = action.params.text;
+                    props.value = action.params.text;
+                }
+                break;
+
+            case 'setProgress':
+                if (gameObject.type === 'progressBar' && this.engine.applyProgressBarValue) {
+                    this.engine.applyProgressBarValue(gameObject, action.params.value);
+                }
+                break;
+
+            case 'setScrollY':
+                if (gameObject.type === 'scrollView' && this.engine.updateObjectProperties) {
+                    this.engine.updateObjectProperties(gameObject, { scrollY: action.params.scrollY || 0 });
                 }
                 break;
                 
@@ -464,13 +591,17 @@ export class BehaviorSystem {
             .filter(b => b.eventType === 'start' && b.enabled)
             .forEach(b => this.executeBehavior(b));
         
-        // 设置更新循环
+        // 设置更新循环（collisionEnter 使用上一帧结束时的碰撞快照）
         this.updateHandler = () => {
             if (!this.isRunning) return;
-            
+
+            this._collisionEnterBaseline = new Set(this._collisionPairEnd);
+
             this.behaviors
-                .filter(b => b.eventType === 'update' && b.enabled)
-                .forEach(b => this.executeBehavior(b));
+                .filter((b) => b.eventType === 'update' && b.enabled)
+                .forEach((b) => this.executeBehavior(b));
+
+            this._rebuildCollisionPairsEnd();
         };
         
         this.engine.app.ticker.add(this.updateHandler);

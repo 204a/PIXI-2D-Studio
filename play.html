@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>游戏预览</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #111; overflow: hidden; }
+    #root { height: 100%; }
+    .hud {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      gap: 10px;
+      z-index: 9999;
+    }
+    .hud button {
+      padding: 8px 12px;
+      background: rgba(37, 37, 37, 0.9);
+      color: #fff;
+      border: 1px solid #444;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .hud button:hover { border-color: #666; }
+    .tip {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      color: #aaa;
+      font-size: 12px;
+      z-index: 9999;
+      background: rgba(0,0,0,0.35);
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #333;
+    }
+    .empty {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ccc;
+      font-size: 14px;
+    }
+    .empty .card {
+      width: min(560px, calc(100% - 40px));
+      background: #1b1b1b;
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 18px;
+      line-height: 1.6;
+    }
+    .empty code { color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="hud">
+    <button id="btn-back">← 返回编辑器</button>
+    <button id="btn-reload">↻ 重新加载</button>
+  </div>
+  <div class="tip">提示：首次播放音频可能需要点击一次页面（浏览器限制）。按 Esc 返回编辑器。</div>
+  <div id="root"></div>
+  <script type="module" src="/src/play.js"></script>
+</body>
+</html>
+

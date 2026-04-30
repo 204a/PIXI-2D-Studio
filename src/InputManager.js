@@ -47,6 +47,34 @@ export class InputManager {
             this.mouseButtons[e.button] = false;
             this.mouseButtonsReleased[e.button] = true;
         });
+
+        // 触摸映射为鼠标左键与坐标（移动端预览/游玩）
+        const touchXY = (e) => {
+            const t = e.touches && e.touches[0] ? e.touches[0] : e.changedTouches && e.changedTouches[0];
+            if (t) {
+                this.mouseX = t.clientX;
+                this.mouseY = t.clientY;
+            }
+        };
+        window.addEventListener(
+            'touchstart',
+            (e) => {
+                touchXY(e);
+                if (!this.mouseButtons[0]) this.mouseButtonsPressed[0] = true;
+                this.mouseButtons[0] = true;
+            },
+            { passive: true }
+        );
+        window.addEventListener(
+            'touchend',
+            (e) => {
+                touchXY(e);
+                this.mouseButtons[0] = false;
+                this.mouseButtonsReleased[0] = true;
+            },
+            { passive: true }
+        );
+        window.addEventListener('touchmove', (e) => touchXY(e), { passive: true });
     }
     
     /**

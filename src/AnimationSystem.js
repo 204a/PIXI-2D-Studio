@@ -8,6 +8,7 @@ export class AnimationSystem {
     constructor(engine) {
         this.engine = engine;
         this.animations = new Map(); // 动画数据
+        this.animationFrames = new Map(); // 动画帧（资源名数组，可序列化）
         this.animatedSprites = new Map(); // 播放中的动画精灵
     }
     
@@ -15,6 +16,10 @@ export class AnimationSystem {
      * 创建动画（从多张图片）
      */
     createAnimation(name, frames) {
+        // 记录可导出的帧名（仅字符串形式）
+        if (Array.isArray(frames) && frames.every(f => typeof f === 'string')) {
+            this.animationFrames.set(name, [...frames]);
+        }
         const textures = frames.map(frame => {
             if (typeof frame === 'string') {
                 // 资源名称
@@ -111,6 +116,7 @@ export class AnimationSystem {
      */
     removeAnimation(name) {
         this.animations.delete(name);
+        this.animationFrames.delete(name);
     }
     
     /**
@@ -122,6 +128,34 @@ export class AnimationSystem {
             sprite.stop();
             this.animatedSprites.delete(gameObject.id);
         }
+    }
+
+    export() {
+        return {
+            animations: Array.from(this.animationFrames.entries()).map(([name, frames]) => ({
+                name,
+                frames
+            }))
+        };
+    }
+
+    import(data) {
+        const list = data && data.animations;
+        if (!Array.isArray(list)) return;
+        list.forEach((a) => {
+            if (a && a.name && Array.isArray(a.frames) && a.frames.length > 0) {
+                this.createAnimation(a.name, a.frames);
+            }
+        });
+    }
+
+    reset() {
+        this.animatedSprites.forEach((sprite) => {
+            if (sprite && sprite.stop) sprite.stop();
+        });
+        this.animations.clear();
+        this.animationFrames.clear();
+        this.animatedSprites.clear();
     }
 }
 
