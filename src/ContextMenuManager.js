@@ -2,6 +2,8 @@
  * 右键菜单管理器
  */
 
+import * as PIXI from 'pixi.js';
+
 export class ContextMenuManager {
     constructor(engine) {
         this.engine = engine;
@@ -26,15 +28,98 @@ export class ContextMenuManager {
         e.preventDefault();
         
         if (this.engine.isRunning) return;
-        
-        // 获取点击的对象
-        this.targetObject = this.engine.selectedObject;
-        
+
+        const globalPoint = this._clientToGlobal(e.clientX, e.clientY);
+        let picked = this.pickGameObjectWithGlobal(globalPoint);
+        if (
+            !picked &&
+            this.engine.selectedObject &&
+            this._hitGameObject(globalPoint, this.engine.selectedObject)
+        ) {
+            picked = this.engine.selectedObject;
+        }
+        this.targetObject = picked;
+
         if (!this.targetObject) {
             this.showCanvasMenu(e.clientX, e.clientY);
         } else {
+            this.engine.selectObject(this.targetObject);
             this.showObjectMenu(e.clientX, e.clientY);
         }
+    }
+
+    /**
+     * DOM 坐标转为与 Pixi 交互一致的 global（含 resolution / 画布缩放），与 containsPoint、getBounds 同一空间
+     */
+    _clientToGlobal(clientX, clientY) {
+        const pt = new PIXI.Point();
+        const renderer = this.engine.app?.renderer;
+        if (renderer?.events?.mapPositionToPoint) {
+            renderer.events.mapPositionToPoint(pt, clientX, clientY);
+            return pt;
+        }
+        const canvas = this.engine.app.view || this.engine.app.canvas;
+        if (!canvas) return pt;
+        const rect = canvas.getBoundingClientRect();
+        const sx = clientX - rect.left;
+        const sy = clientY - rect.top;
+        const res = renderer?.resolution ?? 1;
+        pt.x = (sx * (canvas.width / rect.width)) / res;
+        pt.y = (sy * (canvas.height / rect.height)) / res;
+        return pt;
+    }
+
+    _hitGameObject(globalPoint, obj) {
+        const disp = obj.displayObject;
+        if (!disp) return false;
+        // 隐藏后 visible=false，containsPoint 常失效；仍用包络盒拾取，才能右键「显示对象」
+        const useBoundsOnly = obj.properties.hidden || !disp.visible;
+        if (!useBoundsOnly) {
+            try {
+                if (typeof disp.containsPoint === 'function' && disp.containsPoint(globalPoint)) {
+                    return true;
+                }
+            } catch (_) {}
+        }
+        try {
+            const b = disp.getBounds();
+            return (
+                globalPoint.x >= b.x &&
+                globalPoint.x <= b.x + b.width &&
+                globalPoint.y >= b.y &&
+                globalPoint.y <= b.y + b.height
+            );
+        } catch (_) {
+            return false;
+        }
+    }
+
+    /**
+     * 画布上最顶层的游戏对象（含已隐藏；仅排除整层隐藏；与 eventMode 无关）
+     */
+    pickGameObjectAt(clientX, clientY) {
+        return this.pickGameObjectWithGlobal(this._clientToGlobal(clientX, clientY));
+    }
+
+    pickGameObjectWithGlobal(globalPoint) {
+        const lm = this.engine.layerManager;
+        const candidates = this.engine.gameObjects.filter((o) => {
+            const disp = o.displayObject;
+            if (!disp) return false;
+            const lid = o.properties.layerId || 'layer_default';
+            const layer = lm?.getLayer(lid);
+            if (layer && layer.visible === false) return false;
+            return true;
+        });
+
+        candidates.sort((a, b) => (b.displayObject.zIndex ?? 0) - (a.displayObject.zIndex ?? 0));
+
+        for (const obj of candidates) {
+            if (this._hitGameObject(globalPoint, obj)) {
+                return obj;
+            }
+        }
+        return null;
     }
     
     /**
@@ -179,8 +264,8 @@ export class ContextMenuManager {
                 action: () => this.toggleLock(obj)
             },
             {
-                label: obj.displayObject.visible ? '隐藏对象' : '显示对象',
-                icon: obj.displayObject.visible ? '👁️' : '👁️‍🗨️',
+                label: obj.properties.hidden ? '显示对象' : '隐藏对象',
+                icon: obj.properties.hidden ? '👁️‍🗨️' : '👁️',
                 action: () => this.toggleVisibility(obj)
             }
         );
@@ -346,32 +431,62 @@ export class ContextMenuManager {
     }
     
     /**
-     * 置于顶层
+     * 置于顶层（同父节点 + 同图层内抬高 Z；渲染顺序由 LayerManager 按 z 排序）
      */
     bringToFront(obj) {
-        const parent = obj.displayObject.parent;
-        parent.removeChild(obj.displayObject);
-        parent.addChild(obj.displayObject);
-        
+        const disp = obj.displayObject;
+        if (!disp?.parent) return;
+        const parent = disp.parent;
+        const lid = obj.properties.layerId || 'layer_default';
+        const peers = this.engine.gameObjects.filter(
+            (o) =>
+                o.displayObject?.parent === parent && (o.properties.layerId || 'layer_default') === lid
+        );
+        let maxZ = -Infinity;
+        for (const o of peers) {
+            const z = Number.isFinite(Number(o.properties.z)) ? Number(o.properties.z) : 0;
+            if (z > maxZ) maxZ = z;
+        }
+        if (!Number.isFinite(maxZ)) maxZ = 0;
+        this.engine.updateObjectProperties(obj, { z: maxZ + 1 });
+
         this.engine.historyManager.saveState('置于顶层');
-        
+
         if (this.engine.editorUI) {
-            this.engine.editorUI.updateStatus('✅ 已置于顶层');
+            this.engine.editorUI.updateStatus('✅ 已置于顶层（Z=' + obj.properties.z + '）');
+            if (this.engine.selectedObject === obj) {
+                this.engine.editorUI.updatePropertiesPanel(obj);
+            }
         }
     }
-    
+
     /**
-     * 置于底层
+     * 置于底层（同父节点 + 同图层内降低 Z）
      */
     sendToBack(obj) {
-        const parent = obj.displayObject.parent;
-        parent.removeChild(obj.displayObject);
-        parent.addChildAt(obj.displayObject, 0);
-        
+        const disp = obj.displayObject;
+        if (!disp?.parent) return;
+        const parent = disp.parent;
+        const lid = obj.properties.layerId || 'layer_default';
+        const peers = this.engine.gameObjects.filter(
+            (o) =>
+                o.displayObject?.parent === parent && (o.properties.layerId || 'layer_default') === lid
+        );
+        let minZ = Infinity;
+        for (const o of peers) {
+            const z = Number.isFinite(Number(o.properties.z)) ? Number(o.properties.z) : 0;
+            if (z < minZ) minZ = z;
+        }
+        if (!Number.isFinite(minZ)) minZ = 0;
+        this.engine.updateObjectProperties(obj, { z: minZ - 1 });
+
         this.engine.historyManager.saveState('置于底层');
-        
+
         if (this.engine.editorUI) {
-            this.engine.editorUI.updateStatus('✅ 已置于底层');
+            this.engine.editorUI.updateStatus('✅ 已置于底层（Z=' + obj.properties.z + '）');
+            if (this.engine.selectedObject === obj) {
+                this.engine.editorUI.updatePropertiesPanel(obj);
+            }
         }
     }
     
@@ -380,8 +495,12 @@ export class ContextMenuManager {
      */
     toggleLock(obj) {
         obj.properties.locked = !obj.properties.locked;
-        obj.displayObject.eventMode = obj.properties.locked ? 'none' : 'static';
-        
+        if (this.engine.layerManager) {
+            this.engine.layerManager.applyToAllObjects();
+        } else {
+            obj.displayObject.eventMode = obj.properties.locked ? 'none' : 'static';
+        }
+
         if (this.engine.editorUI) {
             this.engine.editorUI.updateStatus(
                 obj.properties.locked ? '🔒 已锁定' : '🔓 已解锁'
@@ -398,12 +517,23 @@ export class ContextMenuManager {
      * 显示/隐藏对象
      */
     toggleVisibility(obj) {
-        obj.displayObject.visible = !obj.displayObject.visible;
+        obj.properties.hidden = !obj.properties.hidden;
+        // 交给图层系统统一应用可见性（保证切换图层/场景后可恢复）
+        if (this.engine.layerManager) {
+            this.engine.layerManager.applyToAllObjects();
+        } else {
+            obj.displayObject.visible = !obj.properties.hidden;
+        }
         
         if (this.engine.editorUI) {
             this.engine.editorUI.updateStatus(
-                obj.displayObject.visible ? '👁️ 已显示' : '👁️‍🗨️ 已隐藏'
+                obj.properties.hidden ? '👁️‍🗨️ 已隐藏' : '👁️ 已显示'
             );
+        }
+
+        // 更新属性面板
+        if (this.engine.onObjectSelected && this.engine.selectedObject === obj) {
+            this.engine.onObjectSelected(obj);
         }
     }
     

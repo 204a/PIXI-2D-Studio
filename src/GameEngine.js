@@ -21,6 +21,7 @@ import { LayerManager } from './LayerManager.js';
 import { CameraManager } from './CameraManager.js';
 import { SceneManager } from './SceneManager.js';
 import { PhysicsSystem } from './PhysicsSystem.js';
+import { devLog } from './utils/devLog.js';
 
 /**
  * 游戏引擎核心类
@@ -48,6 +49,9 @@ export class GameEngine {
         this.onObjectSelected = null;
         this.onSceneChanged = null;
         
+        /** 每帧填入「带 isPlatform 的平台对象」，供 PlatformerBehavior 使用（复用数组，少产生垃圾） */
+        this._platformObjectsReuse = [];
+
         // 异步初始化
         this.initPromise = this.init();
     }
@@ -56,7 +60,7 @@ export class GameEngine {
      * 初始化PixiJS应用
      */
     async init() {
-        console.log('GameEngine.init() 开始');
+        devLog('GameEngine.init() 开始');
         
         // 获取容器尺寸
         const container = document.getElementById(this.containerId);
@@ -65,7 +69,7 @@ export class GameEngine {
             throw new Error('找不到画布容器: ' + this.containerId);
         }
         
-        console.log('找到容器:', container);
+        devLog('找到容器:', container);
         
         // 确保容器可见以获取正确尺寸
         const app = document.getElementById('app');
@@ -79,15 +83,15 @@ export class GameEngine {
         const width = rect.width > 0 ? rect.width : 800;
         const height = rect.height > 0 ? rect.height : 600;
         
-        console.log('Canvas尺寸:', width, 'x', height);
+        devLog('Canvas尺寸:', width, 'x', height);
         
         // 创建PixiJS应用 - 使用兼容的初始化方式
-        console.log('创建PixiJS应用...');
+        devLog('创建PixiJS应用...');
         try {
             // 尝试新API (PixiJS 8.x)
             this.app = new PIXI.Application();
             if (typeof this.app.init === 'function') {
-                console.log('使用新API: app.init()');
+                devLog('使用新API: app.init()');
                 await this.app.init({
                     width,
                     height,
@@ -101,7 +105,7 @@ export class GameEngine {
             }
         } catch (e) {
             // 降级到旧API (PixiJS 7.x)
-            console.log('使用旧API: new Application(options)');
+            devLog('使用旧API: new Application(options)');
             this.app = new PIXI.Application({
                 width,
                 height,
@@ -112,12 +116,12 @@ export class GameEngine {
             });
         }
         
-        console.log('PixiJS初始化完成');
+        devLog('PixiJS初始化完成');
         
         // 将canvas添加到容器
         const canvas = this.app.view || this.app.canvas;
         container.appendChild(canvas);
-        console.log('Canvas已添加到容器');
+        devLog('Canvas已添加到容器');
         
         // 设置canvas样式以填充容器
         canvas.style.width = '100%';
@@ -168,6 +172,9 @@ export class GameEngine {
         this.app.ticker.add(() => {
             const deltaTime = this.app.ticker.deltaTime / 60;
             if (this.overlayManager) this.overlayManager.update();
+            if (this.gridSystem?.visible) {
+                this.gridSystem.drawGrid();
+            }
             this.update(deltaTime);
         });
         
@@ -177,7 +184,7 @@ export class GameEngine {
         // 监听键盘输入
         this.setupKeyboardInput();
         
-        console.log('游戏引擎初始化完成');
+        devLog('游戏引擎初始化完成');
     }
     
     /**
@@ -208,10 +215,16 @@ export class GameEngine {
             // 更新粒子系统
             this.particleSystem.update(deltaTime);
             
-            // 更新平台角色行为
-            const platforms = this.gameObjects.filter(o => o.properties.isPlatform);
-            this.platformerBehaviors.forEach(behavior => {
-                behavior.update(deltaTime, this.inputManager, platforms);
+            // 更新平台跳跃等行为：需要当前场景里所有平台对象
+            const pl = this._platformObjectsReuse;
+            pl.length = 0;
+            const gos = this.gameObjects;
+            for (let i = 0; i < gos.length; i++) {
+                const o = gos[i];
+                if (o.properties?.isPlatform) pl.push(o);
+            }
+            this.platformerBehaviors.forEach((behavior) => {
+                behavior.update(deltaTime, this.inputManager, pl);
             });
 
             // 更新物理系统（Matter.js 最小版）
@@ -267,6 +280,7 @@ export class GameEngine {
                 scaleX: properties.scaleX || 1,
                 scaleY: properties.scaleY || 1,
                 layerId: properties.layerId || this.layerManager?.activeLayerId || 'layer_default',
+                z: properties.z !== undefined ? properties.z : 0,
                 ...properties
             },
             displayObject: null,
@@ -304,9 +318,6 @@ export class GameEngine {
                 break;
             case 'nineSlice':
                 gameObject.displayObject = this.createNineSliceObject(gameObject.properties);
-                break;
-            case 'scrollView':
-                gameObject.displayObject = this.createScrollViewObject(gameObject);
                 break;
             default:
                 console.error('未知的对象类型:', type);
@@ -368,7 +379,7 @@ export class GameEngine {
         sprite.rotation = (props.rotation || 0) * Math.PI / 180;
         sprite.scale.set(props.scaleX || 1, props.scaleY || 1);
         
-        console.log('创建精灵:', props.x, props.y, props.textureName ? '(有贴图)' : '(纯色)');
+        devLog('创建精灵:', props.x, props.y, props.textureName ? '(有贴图)' : '(纯色)');
         return sprite;
     }
     
@@ -388,7 +399,7 @@ export class GameEngine {
         text.alpha = props.alpha;
         text.rotation = (props.rotation || 0) * Math.PI / 180;
         
-        console.log('创建文本:', props.x, props.y);
+        devLog('创建文本:', props.x, props.y);
         return text;
     }
     
@@ -409,7 +420,7 @@ export class GameEngine {
         graphics.alpha = props.alpha;
         graphics.rotation = (props.rotation || 0) * Math.PI / 180;
         
-        console.log('创建矩形:', props.x, props.y);
+        devLog('创建矩形:', props.x, props.y);
         return graphics;
     }
     
@@ -430,7 +441,7 @@ export class GameEngine {
         graphics.y = props.y;
         graphics.alpha = props.alpha;
         
-        console.log('创建圆形:', props.x, props.y);
+        devLog('创建圆形:', props.x, props.y);
         return graphics;
     }
     
@@ -460,7 +471,7 @@ export class GameEngine {
         
         container.addChild(indicator);
         
-        console.log('创建容器:', props.x, props.y);
+        devLog('创建容器:', props.x, props.y);
         return container;
     }
     
@@ -468,8 +479,8 @@ export class GameEngine {
      * 将对象添加到容器
      */
     addChildToContainer(childObject, parentObject, saveHistory = true) {
-        if (parentObject.type !== 'container' && parentObject.type !== 'scrollView') {
-            console.error('父对象必须是容器/滚动视图类型');
+        if (parentObject.type !== 'container') {
+            console.error('父对象必须是容器类型');
             return false;
         }
         
@@ -479,12 +490,7 @@ export class GameEngine {
             currentParent.removeChild(childObject.displayObject);
         }
         
-        // 添加到父容器/滚动内容容器
-        const targetContainer =
-            parentObject.type === 'scrollView' && parentObject._scrollContent
-                ? parentObject._scrollContent
-                : parentObject.displayObject;
-        targetContainer.addChild(childObject.displayObject);
+        parentObject.displayObject.addChild(childObject.displayObject);
         
         // 更新父子关系
         childObject.parentId = parentObject.id;
@@ -495,7 +501,7 @@ export class GameEngine {
         childObject.displayObject.x -= parentX;
         childObject.displayObject.y -= parentY;
         
-        console.log('对象已添加到容器');
+        devLog('对象已添加到容器');
         if (saveHistory) {
             this.historyManager.saveState('添加到容器');
         }
@@ -507,17 +513,12 @@ export class GameEngine {
      * 导入场景时：子对象已在 viewport 上创建，按存档的局部坐标挂到容器下
      */
     _reparentImportedObject(childObject, parentObject) {
-        if (parentObject.type !== 'container' && parentObject.type !== 'scrollView') return false;
+        if (parentObject.type !== 'container') return false;
         const disp = childObject.displayObject;
-        const vp = this.viewportController ? this.viewportController.viewport : this.app.stage;
         if (disp.parent) {
             disp.parent.removeChild(disp);
         }
-        const targetContainer =
-            parentObject.type === 'scrollView' && parentObject._scrollContent
-                ? parentObject._scrollContent
-                : parentObject.displayObject;
-        targetContainer.addChild(disp);
+        parentObject.displayObject.addChild(disp);
         childObject.parentId = parentObject.id;
         const p = childObject.properties;
         disp.x = p.x !== undefined ? p.x : 0;
@@ -530,7 +531,7 @@ export class GameEngine {
      */
     removeChildFromContainer(childObject) {
         if (!childObject.parentId) {
-            console.log('对象不在容器中');
+            devLog('对象不在容器中');
             return false;
         }
         
@@ -543,12 +544,7 @@ export class GameEngine {
         // 转换回世界坐标
         const worldPos = childObject.displayObject.toGlobal({ x: 0, y: 0 });
         
-        // 从父容器移除
-        const fromContainer =
-            parentObject.type === 'scrollView' && parentObject._scrollContent
-                ? parentObject._scrollContent
-                : parentObject.displayObject;
-        fromContainer.removeChild(childObject.displayObject);
+        parentObject.displayObject.removeChild(childObject.displayObject);
         
         // 添加回viewport或stage
         const container = this.viewportController ? this.viewportController.viewport : this.app.stage;
@@ -561,7 +557,7 @@ export class GameEngine {
         // 清除父子关系
         childObject.parentId = null;
         
-        console.log('对象已从容器移除');
+        devLog('对象已从容器移除');
         this.historyManager.saveState('从容器移除');
         
         return true;
@@ -733,52 +729,6 @@ export class GameEngine {
         return plane;
     }
 
-    createScrollViewObject(gameObject) {
-        const props = gameObject.properties;
-        const w = props.width || 260;
-        const h = props.height || 180;
-        const c = new PIXI.Container();
-        c.x = props.x;
-        c.y = props.y;
-        c.alpha = props.alpha !== undefined ? props.alpha : 1;
-        c.rotation = (props.rotation || 0) * Math.PI / 180;
-
-        const bg = new PIXI.Graphics();
-        bg.lineStyle(2, 0x888888, 0.8);
-        bg.beginFill(0x000000, 0.15);
-        bg.drawRoundedRect(0, 0, w, h, 6);
-        bg.endFill();
-
-        const content = new PIXI.Container();
-        content.x = 0;
-        content.y = 0;
-
-        const mask = new PIXI.Graphics();
-        mask.beginFill(0xffffff);
-        mask.drawRect(0, 0, w, h);
-        mask.endFill();
-        content.mask = mask;
-
-        c.addChild(bg, content, mask);
-        c.hitArea = new PIXI.Rectangle(0, 0, w, h);
-
-        gameObject._scrollContent = content;
-        gameObject._scrollMask = mask;
-
-        // 滚轮：运行态可滚动；编辑态仅用于观察（不改变选中/拖拽）
-        const engine = this;
-        c.on('wheel', (e) => {
-            if (!props.wheelEnabled) return;
-            if (!engine.isRunning) return;
-            const delta = (e.deltaY || 0);
-            engine.updateObjectProperties(gameObject, { scrollY: (props.scrollY || 0) + delta });
-        });
-
-        // 初始应用 scrollY
-        this.updateObjectProperties(gameObject, { scrollY: props.scrollY || 0 });
-        return c;
-    }
-
     redrawButton(gameObject) {
         const props = gameObject.properties;
         const w = props.width || 120;
@@ -827,7 +777,24 @@ export class GameEngine {
         // 鼠标按下
         obj.on('pointerdown', (event) => {
             if (this.isRunning) return;
-            
+
+            const sm = this.selectionManager;
+            const parent = obj.parent;
+            const cohort =
+                sm &&
+                sm.selectedObjects.length > 1 &&
+                sm.selectedObjects.includes(gameObject)
+                    ? sm.selectedObjects.filter((go) => go.displayObject.parent === parent)
+                    : null;
+            const batchStarts =
+                cohort && cohort.length > 1
+                    ? cohort.map((go) => ({
+                          gameObject: go,
+                          startX: go.displayObject.x,
+                          startY: go.displayObject.y
+                      }))
+                    : null;
+
             // 设置当前拖拽对象
             this.draggingObject = {
                 gameObject,
@@ -835,9 +802,10 @@ export class GameEngine {
                 startX: event.global.x,
                 startY: event.global.y,
                 objStartX: obj.x,
-                objStartY: obj.y
+                objStartY: obj.y,
+                batchStarts
             };
-            
+
             // 阻止事件冒泡
             event.stopPropagation();
         });
@@ -865,45 +833,67 @@ export class GameEngine {
             // 移动超过5像素才算拖拽
             if (distance > 5) {
                 drag.isDragging = true;
-                
-                // 计算新位置
+
+                // 计算主拖动对象新位置
                 let newX = drag.objStartX + dx;
                 let newY = drag.objStartY + dy;
-                
+
                 // 智能吸附到其他对象
                 if (this.alignmentManager) {
-                    const snap = this.alignmentManager.snapToObjects(drag.gameObject);
+                    const snap = this.alignmentManager.snapToObjects(drag.gameObject, null, newX, newY);
                     if (snap) {
                         if (snap.snapX !== null) newX = snap.snapX;
                         if (snap.snapY !== null) newY = snap.snapY;
                     }
                 }
 
-                // 吸附到参考线（Shift 临时禁用）
-                if (!(event.nativeEvent && event.nativeEvent.shiftKey) && this.overlayManager) {
-                    const gSnap = this.overlayManager.snapToGuides(newX, newY);
-                    if (gSnap) {
-                        if (gSnap.snapX !== null) newX = gSnap.snapX;
-                        if (gSnap.snapY !== null) newY = gSnap.snapY;
-                    }
+                // 吸附到固定网格（网格可见且开启吸附；Shift 临时禁用）
+                if (
+                    !(event.nativeEvent && event.nativeEvent.shiftKey) &&
+                    this.gridSystem &&
+                    this.gridSystem.visible &&
+                    this.gridSystem.snapEnabled
+                ) {
+                    newX = this.gridSystem.snap(newX);
+                    newY = this.gridSystem.snap(newY);
                 }
-                
-                obj.x = newX;
-                obj.y = newY;
-                
-                drag.gameObject.properties.x = obj.x;
-                drag.gameObject.properties.y = obj.y;
-                
-                // 拖拽时也选中对象
+
+                const appliedDx = newX - drag.objStartX;
+                const appliedDy = newY - drag.objStartY;
+
+                if (drag.batchStarts && drag.batchStarts.length > 1) {
+                    for (const row of drag.batchStarts) {
+                        const go = row.gameObject;
+                        const d = go.displayObject;
+                        d.x = row.startX + appliedDx;
+                        d.y = row.startY + appliedDy;
+                        go.properties.x = d.x;
+                        go.properties.y = d.y;
+                    }
+                    if (this.selectionManager) {
+                        this.selectionManager.updateVisualFeedback();
+                    }
+                } else {
+                    obj.x = newX;
+                    obj.y = newY;
+
+                    drag.gameObject.properties.x = obj.x;
+                    drag.gameObject.properties.y = obj.y;
+                }
+
+                // 拖拽时也选中对象（单选或非当前主对象时）
                 if (this.selectedObject !== drag.gameObject) {
                     this.selectObject(drag.gameObject);
                 }
-                
+
                 // 更新变换控制框
                 this.transformControls.updateTransform();
-                
-                // 通知UI更新
-                if (this.onObjectSelected) {
+
+                // 通知UI更新（多选批量拖动不每帧刷新属性面板）
+                if (
+                    this.onObjectSelected &&
+                    !(drag.batchStarts && drag.batchStarts.length > 1)
+                ) {
                     this.onObjectSelected(drag.gameObject);
                 }
             }
@@ -920,9 +910,15 @@ export class GameEngine {
                 this.alignmentManager.clearGuides();
             }
             
-            // 如果没有拖拽，则是点击选中
+            // 如果没有拖拽，则是点击选中（Shift 累加/切换多选）
             if (!drag.isDragging) {
-                this.selectObject(drag.gameObject);
+                const ne = event.nativeEvent || event.data?.originalEvent;
+                const shift = !!(ne && ne.shiftKey);
+                if (shift && this.selectionManager) {
+                    this.selectionManager.toggleSelection(drag.gameObject);
+                } else {
+                    this.selectObject(drag.gameObject);
+                }
             } else {
                 // 拖拽结束，保存历史
                 this.historyManager.saveState('移动对象');
@@ -953,7 +949,11 @@ export class GameEngine {
      */
     selectObject(gameObject) {
         this.selectedObject = gameObject;
-        
+        if (this.selectionManager) {
+            this.selectionManager.selectedObjects = [gameObject];
+            this.selectionManager.updateVisualFeedback();
+        }
+
         // 更新变换控制框
         this.transformControls.selectObject(gameObject);
         
@@ -992,6 +992,14 @@ export class GameEngine {
             obj.rotation = properties.rotation * Math.PI / 180;
             gameObject.properties.rotation = properties.rotation;
         }
+
+        if (properties.z !== undefined) {
+            const zv = parseFloat(properties.z);
+            gameObject.properties.z = Number.isFinite(zv) ? zv : 0;
+            if (this.layerManager) {
+                this.layerManager.applyToAllObjects();
+            }
+        }
         
         if (properties.width !== undefined && gameObject.type === 'rectangle') {
             this.redrawRectangle(gameObject, properties);
@@ -1001,14 +1009,32 @@ export class GameEngine {
             this.redrawRectangle(gameObject, properties);
         }
         
-        if (properties.text !== undefined && gameObject.type === 'text') {
-            obj.text = properties.text;
-            gameObject.properties.text = properties.text;
+        if (gameObject.type === 'text') {
+            const t = /** @type {PIXI.Text} */ (obj);
+            if (properties.text !== undefined) {
+                t.text = properties.text;
+                gameObject.properties.text = properties.text;
+            }
+            if (properties.fontSize !== undefined) {
+                t.style.fontSize = properties.fontSize;
+                gameObject.properties.fontSize = properties.fontSize;
+            }
+            if (properties.fontFamily !== undefined) {
+                const fam = properties.fontFamily || 'Arial';
+                t.style.fontFamily = fam;
+                gameObject.properties.fontFamily = properties.fontFamily;
+            }
+            if (properties.align !== undefined) {
+                t.style.align = properties.align;
+                gameObject.properties.align = properties.align;
+            }
         }
         
         if (properties.color !== undefined) {
             gameObject.properties.color = properties.color;
-            if (gameObject.type === 'rectangle' || gameObject.type === 'sprite') {
+            if (gameObject.type === 'text') {
+                /** @type {PIXI.Text} */ (obj).style.fill = properties.color;
+            } else if (gameObject.type === 'rectangle' || gameObject.type === 'sprite') {
                 this.redrawGraphics(gameObject);
             }
         }
@@ -1055,9 +1081,12 @@ export class GameEngine {
         if (gameObject.type === 'nineSlice') {
             const plane = gameObject.displayObject;
             if (properties.textureName !== undefined) {
-                const tex = gameObject.properties.textureName
-                    ? this.resourceManager.getTexture(gameObject.properties.textureName)
-                    : PIXI.Texture.WHITE;
+                const tn =
+                    properties.textureName === '' || properties.textureName == null
+                        ? undefined
+                        : properties.textureName;
+                gameObject.properties.textureName = tn;
+                const tex = tn ? this.resourceManager.getTexture(tn) : PIXI.Texture.WHITE;
                 if (tex) plane.texture = tex;
             }
             if (properties.width !== undefined) plane.width = properties.width;
@@ -1068,44 +1097,6 @@ export class GameEngine {
             if (properties.sliceBottom !== undefined) plane.bottomHeight = properties.sliceBottom;
         }
 
-        if (gameObject.type === 'scrollView') {
-            const props = gameObject.properties;
-            const c = gameObject._scrollContent;
-            const m = gameObject._scrollMask;
-            const w = props.width || 260;
-            const h = props.height || 180;
-            if (m && m.clear) {
-                m.clear();
-                m.beginFill(0xffffff);
-                m.drawRect(0, 0, w, h);
-                m.endFill();
-            }
-            // 背景重绘
-            const bg = gameObject.displayObject.children[0];
-            if (bg && bg.clear) {
-                bg.clear();
-                bg.lineStyle(2, 0x888888, 0.8);
-                bg.beginFill(0x000000, 0.15);
-                bg.drawRoundedRect(0, 0, w, h, 6);
-                bg.endFill();
-            }
-            gameObject.displayObject.hitArea = new PIXI.Rectangle(0, 0, w, h);
-
-            if (properties.wheelEnabled !== undefined) props.wheelEnabled = !!properties.wheelEnabled;
-            if (properties.contentHeight !== undefined) props.contentHeight = properties.contentHeight;
-
-            const maxScroll = Math.max(0, (props.contentHeight || 0) - h);
-            const next = Math.max(0, Math.min(maxScroll, props.scrollY || 0));
-            if (properties.scrollY !== undefined) {
-                props.scrollY = properties.scrollY;
-            }
-            const clamped = Math.max(0, Math.min(maxScroll, props.scrollY || 0));
-            props.scrollY = clamped;
-            if (c) {
-                c.y = -clamped;
-            }
-        }
-        
         // 更新变换控制框
         if (this.selectedObject === gameObject) {
             this.transformControls.updateTransform();
@@ -1158,6 +1149,9 @@ export class GameEngine {
             if (this.selectedObject === gameObject) {
                 this.selectedObject = null;
             }
+            if (this.transformControls.selectedObject === gameObject) {
+                this.transformControls.hide();
+            }
             
             this.historyManager.saveState('删除对象');
         }
@@ -1177,7 +1171,8 @@ export class GameEngine {
         this.gameObjects = [];
         this.selectedObject = null;
         this.behaviorSystem.behaviors = [];
-        
+        this.transformControls.hide();
+
         if (saveHistory) {
             this.historyManager.saveState('清空场景');
         }
@@ -1234,7 +1229,7 @@ export class GameEngine {
         // 启动行为系统
         this.behaviorSystem.start();
         
-        console.log('游戏开始运行，平台角色数:', this.platformerBehaviors.length);
+        devLog('游戏开始运行，平台角色数:', this.platformerBehaviors.length);
     }
     
     /**
@@ -1270,7 +1265,7 @@ export class GameEngine {
             obj.displayObject.eventMode = 'static';
         });
         
-        console.log('游戏停止运行');
+        devLog('游戏停止运行');
     }
     
     /**
@@ -1417,7 +1412,7 @@ export class GameEngine {
             if (!objData.parentId) continue;
             const child = this.gameObjects.find((g) => g.id === objData.id);
             const parent = this.gameObjects.find((g) => g.id === objData.parentId);
-            if (child && parent && (parent.type === 'container' || parent.type === 'scrollView')) {
+            if (child && parent && parent.type === 'container') {
                 this._reparentImportedObject(child, parent);
             }
         }

@@ -2,7 +2,8 @@
  * 图层管理器（最小可用版）
  * - 维护 layer 列表（顺序/可见/锁定）
  * - 对象通过 properties.layerId 归属图层
- * - 根据图层顺序刷新 displayObject.zIndex（依赖 viewport.sortableChildren=true）
+ * - 同父节点内渲染顺序：图层顺序 → properties.z（越大越靠前）→ 对象 id
+ * - 依赖各父容器 sortableChildren=true（assignZOrder 会开启）
  */
 export class LayerManager {
     constructor(engine) {
@@ -104,40 +105,71 @@ export class LayerManager {
         return true;
     }
 
-    applyToAllObjects() {
-        // zIndex = layerOrder * big + withinLayerIndex
-        const layerOrder = new Map(this.layers.map((l, i) => [l.id, i]));
-        const perLayerCount = new Map();
+    /**
+     * 按「图层 → Z 轴 → id」设置同父节点下的 zIndex，并 sortChildren。
+     * @param {{ layers?: Array<{ id: string }> }} layersData 与 export().layers 同结构
+     */
+    static assignZOrder(gameObjects, layersData) {
+        const layers = layersData?.layers?.length ? layersData.layers : [{ id: 'layer_default' }];
+        const layerOrder = new Map(layers.map((l, i) => [l.id, i]));
 
-        this.engine.gameObjects.forEach(obj => {
+        const byParent = new Map();
+        for (const obj of gameObjects) {
+            if (!obj.displayObject) continue;
+            const par = obj.displayObject.parent;
+            if (!byParent.has(par)) byParent.set(par, []);
+            byParent.get(par).push(obj);
+        }
+
+        const cmp = (a, b) => {
+            let lidA = a.properties.layerId || 'layer_default';
+            let lidB = b.properties.layerId || 'layer_default';
+            if (!layerOrder.has(lidA)) lidA = 'layer_default';
+            if (!layerOrder.has(lidB)) lidB = 'layer_default';
+            const oa = layerOrder.get(lidA) ?? 0;
+            const ob = layerOrder.get(lidB) ?? 0;
+            if (oa !== ob) return oa - ob;
+            const za = Number.isFinite(Number(a.properties.z)) ? Number(a.properties.z) : 0;
+            const zb = Number.isFinite(Number(b.properties.z)) ? Number(b.properties.z) : 0;
+            if (za !== zb) return za - zb;
+            return String(a.id).localeCompare(String(b.id));
+        };
+
+        for (const [, group] of byParent) {
+            group.sort(cmp);
+            group.forEach((obj, i) => {
+                obj.displayObject.zIndex = i;
+            });
+            const parent = group[0]?.displayObject?.parent;
+            if (parent) {
+                parent.sortableChildren = true;
+                if (parent.sortChildren) parent.sortChildren();
+            }
+        }
+    }
+
+    applyToAllObjects() {
+        const layerOrder = new Map(this.layers.map((l, i) => [l.id, i]));
+
+        this.engine.gameObjects.forEach((obj) => {
             const lid = obj.properties.layerId || 'layer_default';
             if (!layerOrder.has(lid)) obj.properties.layerId = 'layer_default';
         });
 
-        this.engine.gameObjects.forEach(obj => {
+        LayerManager.assignZOrder(this.engine.gameObjects, { layers: this.layers });
+
+        this.engine.gameObjects.forEach((obj) => {
             const lid = obj.properties.layerId || 'layer_default';
-            const order = layerOrder.get(lid) ?? 0;
-            const n = (perLayerCount.get(lid) ?? 0) + 1;
-            perLayerCount.set(lid, n);
-
-            obj.displayObject.zIndex = order * 10000 + n;
-
             const layer = this.getLayer(lid);
             if (layer) {
-                // 图层可见性：与对象本身 visible 取与
-                obj.displayObject.visible = layer.visible && obj.displayObject.visible !== false;
-                // 图层锁定：禁用交互
+                obj.displayObject.visible = layer.visible !== false && !obj.properties.hidden;
                 if (layer.locked) {
                     obj.displayObject.eventMode = 'none';
                 } else if (!this.engine.isRunning) {
-                    // 若对象自身锁定，交互仍禁用（由 ContextMenu 控制）
                     obj.displayObject.eventMode = obj.properties.locked ? 'none' : 'static';
                 }
             }
         });
-
-        const vp = this.engine.viewportController?.viewport;
-        if (vp && vp.sortChildren) vp.sortChildren();
     }
 
     export() {

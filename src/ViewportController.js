@@ -23,7 +23,10 @@ export class ViewportController {
         // 创建viewport容器
         this.viewport = new PIXI.Container();
         this.viewport.sortableChildren = true;
-        
+        // 空白区域可命中 viewport（便于框选）；子对象仍优先接收点击
+        this.viewport.eventMode = 'static';
+        this.viewport.hitArea = new PIXI.Rectangle(-1e6, -1e6, 2e6, 2e6);
+
         // 将viewport添加到stage
         this.engine.app.stage.addChild(this.viewport);
         

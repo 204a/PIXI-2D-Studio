@@ -113,6 +113,10 @@ export class EditorUI {
                     type: item.dataset.type,
                     name: item.textContent.trim()
                 };
+                // 关键：部分浏览器要求 setData，否则 drop 可能不触发
+                try {
+                    e.dataTransfer?.setData('text/plain', this.dragSource.type || '');
+                } catch {}
                 e.dataTransfer.effectAllowed = 'copy';
                 console.log('开始拖拽:', this.dragSource.type);
             });
@@ -140,18 +144,91 @@ export class EditorUI {
             element.addEventListener('drop', (e) => {
                 e.preventDefault();
                 
+                // 兜底：若 dragSource 丢失，从 dataTransfer 取
+                if (!this.dragSource) {
+                    try {
+                        const t = e.dataTransfer?.getData('text/plain');
+                        if (t) this.dragSource = { type: t, name: t };
+                    } catch {}
+                }
+
                 if (this.dragSource) {
                     // 获取实际的canvas位置
                     const rect = pixiCanvas.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
+                    const sx = e.clientX - rect.left;
+                    const sy = e.clientY - rect.top;
+
+                    // 将屏幕坐标换算为世界坐标（考虑视口缩放/平移）
+                    const v = this.engine.viewportController?.viewport;
+                    const scaleX = v?.scale?.x || 1;
+                    const scaleY = v?.scale?.y || 1;
+                    const vx = v?.x || 0;
+                    const vy = v?.y || 0;
+                    const x = (sx - vx) / scaleX;
+                    const y = (sy - vy) / scaleY;
                     
                     console.log('放置组件:', this.dragSource.type, '位置:', x, y);
+                    this.updateStatus(`放置组件: ${this.dragSource.type}`);
                     this.createComponent(this.dragSource.type, x, y);
                     this.dragSource = null;
+                } else {
+                    this.updateStatus('放置失败：未获取到拖拽类型（drop 未携带数据）');
                 }
             });
         });
+
+        // 兜底：有些浏览器/层级会导致 drop 不落在目标元素上，使用捕获阶段全局监听
+        if (!this._globalDropBound) {
+            this._globalDropBound = true;
+            const handle = (e) => {
+                const rect = pixiCanvas.getBoundingClientRect();
+                const inside =
+                    e.clientX >= rect.left &&
+                    e.clientX <= rect.right &&
+                    e.clientY >= rect.top &&
+                    e.clientY <= rect.bottom;
+                if (!inside) return;
+
+                // dragover 必须 preventDefault 才能触发 drop
+                if (e.type === 'dragover') {
+                    e.preventDefault();
+                    try { e.dataTransfer.dropEffect = 'copy'; } catch {}
+                    return;
+                }
+
+                if (e.type === 'drop') {
+                    e.preventDefault();
+                    e.stopPropagation?.();
+
+                    if (!this.dragSource) {
+                        try {
+                            const t = e.dataTransfer?.getData('text/plain');
+                            if (t) this.dragSource = { type: t, name: t };
+                        } catch {}
+                    }
+                    if (!this.dragSource) {
+                        this.updateStatus('放置失败：未获取到拖拽类型');
+                        return;
+                    }
+
+                    const sx = e.clientX - rect.left;
+                    const sy = e.clientY - rect.top;
+                    const v = this.engine.viewportController?.viewport;
+                    const scaleX = v?.scale?.x || 1;
+                    const scaleY = v?.scale?.y || 1;
+                    const vx = v?.x || 0;
+                    const vy = v?.y || 0;
+                    const x = (sx - vx) / scaleX;
+                    const y = (sy - vy) / scaleY;
+
+                    this.updateStatus(`放置组件: ${this.dragSource.type}`);
+                    this.createComponent(this.dragSource.type, x, y);
+                    this.dragSource = null;
+                }
+            };
+            document.addEventListener('dragover', handle, true);
+            document.addEventListener('drop', handle, true);
+        }
         
         console.log('拖拽事件已绑定');
     }
@@ -161,6 +238,19 @@ export class EditorUI {
      */
     createComponent(type, x, y) {
         const properties = { x, y };
+
+        // 若当前图层被隐藏，创建对象会“看不见”。这里自动落到第一个可见图层。
+        const lm = this.engine.layerManager;
+        if (lm && lm.activeLayerId) {
+            const active = lm.getLayer(lm.activeLayerId);
+            if (active && active.visible === false) {
+                const fallback = lm.getLayers().find((l) => l.visible !== false) || lm.getLayers()[0];
+                if (fallback) {
+                    properties.layerId = fallback.id;
+                    this.updateStatus('当前图层已隐藏：新对象已放到可见图层');
+                }
+            }
+        }
         
         // 根据类型设置默认属性
         switch (type) {
@@ -218,13 +308,6 @@ export class EditorUI {
                 properties.sliceRight = 12;
                 properties.sliceBottom = 12;
                 break;
-            case 'scrollView':
-                properties.width = 260;
-                properties.height = 180;
-                properties.contentHeight = 400;
-                properties.scrollY = 0;
-                properties.wheelEnabled = true;
-                break;
         }
         
         const obj = this.engine.createGameObject(type, properties);
@@ -270,6 +353,11 @@ export class EditorUI {
             this.exportScene();
         });
 
+        const btnExportHtml = document.getElementById('btn-export-html');
+        if (btnExportHtml) {
+            btnExportHtml.addEventListener('click', () => this.exportStandaloneHtml());
+        }
+
         // 🎮 游玩（打包预览）：写入 localStorage 并打开 play.html
         const btnPlayable = document.getElementById('btn-playable');
         if (btnPlayable) {
@@ -286,93 +374,36 @@ export class EditorUI {
             });
         }
 
-        // 📦 发布：导出可直接部署的 scene.json（与 dist/play.html 配套）
-        const btnPublish = document.getElementById('btn-publish');
-        if (btnPublish) {
-            btnPublish.addEventListener('click', () => {
-                const sceneData = this.engine.exportScene();
-                const json = JSON.stringify(sceneData, null, 2);
-                const blob = new Blob([json], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'scene.json';
-                a.click();
-                URL.revokeObjectURL(url);
-                // 生成嵌入代码片段（最小可用：iframe 指向 play.html）
-                const snippet = `<iframe src=\"play.html\" width=\"800\" height=\"600\" style=\"border:0\" allow=\"autoplay\"></iframe>`;
-                try {
-                    navigator.clipboard?.writeText(snippet);
-                } catch {}
-                window.prompt('嵌入代码（已尝试复制到剪贴板）', snippet);
-                this.updateStatus('已导出 scene.json（并生成嵌入代码片段）');
-            });
-        }
-
-        // 🚀 一键发布：导出单文件 game.html（双击即可游玩）
-        const btnPublishOne = document.getElementById('btn-publish-onefile');
-        if (btnPublishOne) {
-            btnPublishOne.addEventListener('click', () => {
-                try {
-                    const sceneData = this.engine.exportScene();
-                    const html = this._buildStandaloneGameHtml(sceneData);
-                    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'game.html';
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    this.updateStatus('已导出 game.html（双击即可游玩）');
-                } catch (e) {
-                    console.error(e);
-                    this.updateStatus('一键发布失败：' + (e.message || String(e)));
-                }
-            });
-        }
-
-        // 工具模式（轻量版）：旋转/缩放会切换变换控件模式；标尺/参考线开关
-        const setToolBtnActive = (id) => {
-            ['tool-select', 'tool-move', 'tool-rotate', 'tool-scale'].forEach((k) => {
-                const b = document.getElementById(k);
-                if (!b) return;
-                b.style.border = k === id ? '1px solid #4CAF50' : 'none';
-            });
-        };
-
-        document.getElementById('tool-select')?.addEventListener('click', () => {
-            setToolBtnActive('tool-select');
-            this.updateStatus('工具：选择');
-        });
-        document.getElementById('tool-move')?.addEventListener('click', () => {
-            setToolBtnActive('tool-move');
-            this.updateStatus('工具：移动');
-        });
-        document.getElementById('tool-rotate')?.addEventListener('click', () => {
-            setToolBtnActive('tool-rotate');
-            if (this.engine.transformControls && this.engine.transformControls.gizmoMode !== 'rotate') {
-                this.engine.transformControls.toggleGizmoMode();
-            }
-            this.updateStatus('工具：旋转（拖绿点）');
-        });
-        document.getElementById('tool-scale')?.addEventListener('click', () => {
-            setToolBtnActive('tool-scale');
-            if (this.engine.transformControls && this.engine.transformControls.gizmoMode !== 'all') {
-                this.engine.transformControls.toggleGizmoMode();
-            }
-            this.updateStatus('工具：缩放（拖蓝点）');
-        });
-
         document.getElementById('tool-ruler')?.addEventListener('click', () => {
             if (!this.engine.overlayManager) return;
             this.engine.overlayManager.setRulerEnabled(!this.engine.overlayManager.enabledRuler);
             this.updateStatus(this.engine.overlayManager.enabledRuler ? '已显示标尺' : '已隐藏标尺');
         });
-        document.getElementById('tool-guides')?.addEventListener('click', () => {
-            if (!this.engine.overlayManager) return;
-            this.engine.overlayManager.setGuidesEnabled(!this.engine.overlayManager.enabledGuides);
-            this.updateStatus(this.engine.overlayManager.enabledGuides ? '已启用参考线' : '已禁用参考线');
+        document.getElementById('tool-grid')?.addEventListener('click', () => {
+            this.engine.gridSystem.toggle();
+            const on = this.engine.gridSystem.visible;
+            const gs = document.getElementById('grid-cell-size');
+            if (gs) gs.value = String(this.engine.gridSystem.gridSize);
+            this.updateStatus(
+                on
+                    ? `网格已显示（间距 ${this.engine.gridSystem.gridSize}，世界像素；拖拽对象吸附网格，Shift 临时取消）`
+                    : '网格已隐藏（吸附关闭）'
+            );
         });
+
+        const gridCellInput = document.getElementById('grid-cell-size');
+        if (gridCellInput) {
+            gridCellInput.value = String(this.engine.gridSystem.gridSize);
+            gridCellInput.addEventListener('change', () => {
+                let v = parseInt(gridCellInput.value, 10);
+                if (!Number.isFinite(v)) v = this.engine.gridSystem.gridSize;
+                this.engine.gridSystem.setGridSize(v);
+                gridCellInput.value = String(this.engine.gridSystem.gridSize);
+                if (this.engine.gridSystem.visible) {
+                    this.updateStatus(`网格间距 ${this.engine.gridSystem.gridSize}（世界像素）`);
+                }
+            });
+        }
 
         const sceneImportInput = document.getElementById('scene-import-input');
         const btnImport = document.getElementById('btn-import');
@@ -541,39 +572,35 @@ export class EditorUI {
         const btnStop = document.getElementById('btn-stop');
         const btnClear = document.getElementById('btn-clear');
         const btnExport = document.getElementById('btn-export');
+        const btnExportHtml = document.getElementById('btn-export-html');
         const btnImport = document.getElementById('btn-import');
 
         btnPlay.disabled = isRunning;
         btnStop.disabled = !isRunning;
         btnClear.disabled = isRunning;
         btnExport.disabled = isRunning;
+        if (btnExportHtml) btnExportHtml.disabled = isRunning;
         if (btnImport) btnImport.disabled = isRunning;
         const btnPlayable = document.getElementById('btn-playable');
         if (btnPlayable) btnPlayable.disabled = isRunning;
-        const btnPublish = document.getElementById('btn-publish');
-        if (btnPublish) btnPublish.disabled = isRunning;
-        const btnPublishOne = document.getElementById('btn-publish-onefile');
-        if (btnPublishOne) btnPublishOne.disabled = isRunning;
 
         // 按钮样式
         btnPlay.style.opacity = isRunning ? '0.5' : '1';
         btnStop.style.opacity = !isRunning ? '0.5' : '1';
         btnClear.style.opacity = isRunning ? '0.5' : '1';
         btnExport.style.opacity = isRunning ? '0.5' : '1';
+        if (btnExportHtml) btnExportHtml.style.opacity = isRunning ? '0.5' : '1';
         if (btnImport) btnImport.style.opacity = isRunning ? '0.5' : '1';
         if (btnPlayable) btnPlayable.style.opacity = isRunning ? '0.5' : '1';
-        if (btnPublish) btnPublish.style.opacity = isRunning ? '0.5' : '1';
-        if (btnPublishOne) btnPublishOne.style.opacity = isRunning ? '0.5' : '1';
 
         btnPlay.style.cursor = isRunning ? 'not-allowed' : 'pointer';
         btnStop.style.cursor = !isRunning ? 'not-allowed' : 'pointer';
         btnClear.style.cursor = isRunning ? 'not-allowed' : 'pointer';
         btnExport.style.cursor = isRunning ? 'not-allowed' : 'pointer';
+        if (btnExportHtml) btnExportHtml.style.cursor = isRunning ? 'not-allowed' : 'pointer';
         if (btnImport) btnImport.style.cursor = isRunning ? 'not-allowed' : 'pointer';
         if (btnPlayable) btnPlayable.style.cursor = isRunning ? 'not-allowed' : 'pointer';
-        if (btnPublish) btnPublish.style.cursor = isRunning ? 'not-allowed' : 'pointer';
-        if (btnPublishOne) btnPublishOne.style.cursor = isRunning ? 'not-allowed' : 'pointer';
-        
+
         // 禁用/启用左侧组件拖拽
         document.querySelectorAll('.component-item').forEach(item => {
             item.draggable = !isRunning;
@@ -635,6 +662,18 @@ export class EditorUI {
             el.style.opacity = isRunning ? '0.5' : '1';
             el.style.cursor = isRunning ? 'not-allowed' : 'pointer';
         });
+
+        const toolGrid = document.getElementById('tool-grid');
+        const gridCell = document.getElementById('grid-cell-size');
+        if (toolGrid) {
+            toolGrid.disabled = isRunning;
+            toolGrid.style.opacity = isRunning ? '0.5' : '1';
+            toolGrid.style.cursor = isRunning ? 'not-allowed' : 'pointer';
+        }
+        if (gridCell) {
+            gridCell.disabled = isRunning;
+            gridCell.style.opacity = isRunning ? '0.5' : '1';
+        }
     }
     
     /**
@@ -668,6 +707,30 @@ export class EditorUI {
                 <label>类型</label>
                 <input type="text" value="${gameObject.type}" disabled>
             </div>
+
+            <div class="property-group">
+                <label>所在图层</label>
+                ${(() => {
+                    const lm = this.engine.layerManager;
+                    if (!lm) {
+                        return `<input type="text" value="（无图层系统）" disabled>`;
+                    }
+                    const layers = lm.getLayers();
+                    const curId = props.layerId || lm.activeLayerId || 'layer_default';
+                    const cur = lm.getLayer(curId);
+                    const curName = cur ? cur.name : curId;
+                    if (readOnly) {
+                        return `<input type="text" value="${this._escapeAttr(curName)}" disabled>`;
+                    }
+                    return `
+                        <select id="prop-layerId" style="width: 100%; padding: 10px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px;">
+                            ${layers
+                                .map((l) => `<option value="${this._escapeAttr(l.id)}" ${l.id === curId ? 'selected' : ''}>${this._escapeHtml(l.name)}${l.visible === false ? '（隐藏）' : ''}${l.locked ? '（锁定）' : ''}</option>`)
+                                .join('')}
+                        </select>
+                    `;
+                })()}
+            </div>
             
             <div class="property-group">
                 <label>X 坐标</label>
@@ -688,14 +751,35 @@ export class EditorUI {
                 <label>旋转角度</label>
                 <input type="number" id="prop-rotation" value="${props.rotation || 0}" ${dis}>
             </div>
+            
+            <div class="property-group">
+                <label>Z 轴（渲染层级）</label>
+                <input type="number" id="prop-z" value="${props.z !== undefined && props.z !== null ? props.z : 0}" step="1" ${dis}
+                    title="同图层内：数值越大越靠前显示（后进覆盖先进）">
+                <small style="color:#666;font-size:11px;display:block;margin-top:4px;">同图层内越大越靠前；整层顺序仍以左侧图层列表为准。</small>
+            </div>
         `;
         
         // 根据类型添加特定属性
         if (gameObject.type === 'text') {
+            const fonts = this.engine.resourceManager.listFonts();
+            const fontOpts =
+                `<option value="" ${!props.fontFamily || props.fontFamily === 'Arial' ? 'selected' : ''}>系统默认 (Arial)</option>` +
+                fonts
+                    .map(
+                        (f) =>
+                            `<option value="${f.family}" ${props.fontFamily === f.family ? 'selected' : ''}>${this._escapeHtml(f.name)}</option>`
+                    )
+                    .join('');
             html += `
                 <div class="property-group">
                     <label>文本内容</label>
                     <input type="text" id="prop-text" value="${props.text || ''}" ${dis}>
+                </div>
+                
+                <div class="property-group">
+                    <label>字体</label>
+                    <select id="prop-text-font" ${dis} style="width:100%;padding:8px;background:#333;border:1px solid #444;color:#fff;border-radius:4px;">${fontOpts}</select>
                 </div>
                 
                 <div class="property-group">
@@ -979,33 +1063,6 @@ export class EditorUI {
             `;
         }
 
-        if (gameObject.type === 'scrollView') {
-            html += `
-                <div class="property-group">
-                    <label>宽 / 高</label>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-                        <input type="number" id="prop-width" value="${props.width || 260}" ${dis}>
-                        <input type="number" id="prop-height" value="${props.height || 180}" ${dis}>
-                    </div>
-                </div>
-                <div class="property-group">
-                    <label>内容高度</label>
-                    <input type="number" id="prop-contentHeight" value="${props.contentHeight || 400}" ${dis}>
-                </div>
-                <div class="property-group">
-                    <label>滚动 Y</label>
-                    <input type="number" id="prop-scrollY" value="${props.scrollY || 0}" ${dis}>
-                </div>
-                <div class="property-group">
-                    <label><input type="checkbox" id="prop-wheelEnabled" ${props.wheelEnabled !== false ? 'checked' : ''} ${dis} style="width:auto;"> 鼠标滚轮滚动</label>
-                </div>
-                <div class="property-group">
-                    <label>标签（碰撞）</label>
-                    <input type="text" id="prop-tag" value="${props.tag || ''}" ${dis} style="width:100%;padding:8px;background:#333;border:1px solid #444;color:#fff;border-radius:4px;">
-                </div>
-            `;
-        }
-        
         // 容器特殊属性
         if (gameObject.type === 'container') {
             const children = this.engine.getContainerChildren(gameObject);
@@ -1043,9 +1100,9 @@ export class EditorUI {
         } else {
             // 显示可用的容器
             const containers = this.engine.gameObjects.filter(
-                (o) => (o.type === 'container' || o.type === 'scrollView') && o.id !== gameObject.id
+                (o) => o.type === 'container' && o.id !== gameObject.id
             );
-            if (containers.length > 0 && gameObject.type !== 'container' && gameObject.type !== 'scrollView') {
+            if (containers.length > 0 && gameObject.type !== 'container') {
                 html += `
                     <div class="property-group">
                         <label>添加到容器</label>
@@ -1071,6 +1128,20 @@ export class EditorUI {
         `;
         
         panel.innerHTML = html;
+
+        // 图层切换
+        const layerSel = document.getElementById('prop-layerId');
+        if (layerSel && !readOnly && this.engine.layerManager) {
+            layerSel.addEventListener('change', () => {
+                const next = layerSel.value;
+                if (!next) return;
+                gameObject.properties.layerId = next;
+                // 立即应用 zIndex/可见性/锁定
+                this.engine.layerManager.applyToAllObjects();
+                this.updateSceneObjectList();
+                this.updateStatus('已设置对象图层');
+            });
+        }
         
         if (readOnly) return;
         
@@ -1125,6 +1196,7 @@ export class EditorUI {
             'prop-y': 'y',
             'prop-alpha': 'alpha',
             'prop-rotation': 'rotation',
+            'prop-z': 'z',
             'prop-text': 'text',
             'prop-fontSize': 'fontSize',
             'prop-width': 'width',
@@ -1142,7 +1214,7 @@ export class EditorUI {
                     const propName = inputs[inputId];
                     
                     // 类型转换
-                    if (['x', 'y', 'width', 'height', 'radius', 'fontSize', 'rotation'].includes(propName)) {
+                    if (['x', 'y', 'width', 'height', 'radius', 'fontSize', 'rotation', 'z'].includes(propName)) {
                         value = parseFloat(value) || 0;
                     } else if (propName === 'alpha') {
                         value = Math.max(0, Math.min(1, parseFloat(value) || 0));
@@ -1209,6 +1281,13 @@ export class EditorUI {
                 gameObject.properties.fontFamily = fam;
             });
         }
+        const textFont = document.getElementById('prop-text-font');
+        if (textFont) {
+            textFont.addEventListener('change', () => {
+                const fam = textFont.value || 'Arial';
+                this.engine.updateObjectProperties(gameObject, { fontFamily: fam });
+            });
+        }
         const disCb = document.getElementById('prop-btn-disabled');
         if (disCb) {
             disCb.addEventListener('change', () => {
@@ -1234,25 +1313,6 @@ export class EditorUI {
                 const name = nst.value || undefined;
                 gameObject.properties.textureName = name;
                 this.engine.updateObjectProperties(gameObject, { textureName: name });
-            });
-        }
-
-        const svContentH = document.getElementById('prop-contentHeight');
-        if (svContentH) {
-            svContentH.addEventListener('input', () => {
-                this.engine.updateObjectProperties(gameObject, { contentHeight: parseFloat(svContentH.value) || 0 });
-            });
-        }
-        const svScrollY = document.getElementById('prop-scrollY');
-        if (svScrollY) {
-            svScrollY.addEventListener('input', () => {
-                this.engine.updateObjectProperties(gameObject, { scrollY: parseFloat(svScrollY.value) || 0 });
-            });
-        }
-        const svWheel = document.getElementById('prop-wheelEnabled');
-        if (svWheel) {
-            svWheel.addEventListener('change', () => {
-                this.engine.updateObjectProperties(gameObject, { wheelEnabled: !!svWheel.checked });
             });
         }
 
@@ -1569,6 +1629,9 @@ export class EditorUI {
      * 取消选择
      */
     clearSelection() {
+        if (this.engine.selectionManager) {
+            this.engine.selectionManager.clearSelection();
+        }
         this.engine.selectedObject = null;
         this.engine.transformControls.hide();
         this.clearPropertiesPanel();
@@ -1626,9 +1689,9 @@ export class EditorUI {
                     // 运行时不允许选择
                     if (this.engine.isRunning) return;
                     
-                    // Shift点击累加选择
+                    // Shift 点击切换多选（与画布一致）
                     if (e.shiftKey && this.engine.selectionManager) {
-                        this.engine.selectionManager.addToSelection(obj);
+                        this.engine.selectionManager.toggleSelection(obj);
                         return;
                     }
                     
@@ -1640,15 +1703,13 @@ export class EditorUI {
                 item.addEventListener('mouseenter', () => {
                     // 运行时不显示悬停效果
                     if (this.engine.isRunning) return;
-                    const isSelected = this.engine.selectedObject === obj;
-                    if (!isSelected) {
+                    if (!this._isObjectSelectedInUi(obj)) {
                         item.style.background = '#3a3a3a';
                     }
                 });
                 
                 item.addEventListener('mouseleave', () => {
-                    const isSelected = this.engine.selectedObject === obj;
-                    item.style.background = isSelected ? '#444' : '#333';
+                    item.style.background = this._isObjectSelectedInUi(obj) ? '#444' : '#333';
                 });
             }
         });
@@ -1670,8 +1731,16 @@ export class EditorUI {
     /**
      * 渲染单个对象项（支持缩进）
      */
+    _isObjectSelectedInUi(obj) {
+        const sm = this.engine.selectionManager;
+        if (sm && sm.selectedObjects.length > 0) {
+            return sm.selectedObjects.includes(obj);
+        }
+        return this.engine.selectedObject === obj;
+    }
+
     renderObjectItem(obj, level) {
-        const isSelected = this.engine.selectedObject === obj;
+        const isSelected = this._isObjectSelectedInUi(obj);
         const indent = level * 15;
         
         return `
@@ -1708,7 +1777,6 @@ export class EditorUI {
             'progressBar': '📊',
             'inputField': '⌨',
             'nineSlice': '▦',
-            'scrollView': '🧾'
         };
         return icons[type] || '❓';
     }
@@ -1762,6 +1830,13 @@ export class EditorUI {
                     }
                 }
                 this._refreshFontList();
+                // 属性栏字体下拉在构建时已生成，需重建才能看到新注册的字体
+                if (this.engine.selectedObject) {
+                    this.updatePropertiesPanel(
+                        this.engine.selectedObject,
+                        this.engine.isRunning ? { readOnly: true } : {}
+                    );
+                }
                 this.updateStatus('已注册字体');
             });
         }
@@ -1944,6 +2019,9 @@ export class EditorUI {
                 }
             }
             this.refreshImageResourceList();
+            if (this.engine.selectedObject) {
+                this.updatePropertiesPanel(this.engine.selectedObject, this.engine.isRunning ? { readOnly: true } : {});
+            }
             this.updateStatus(`已添加 ${files.length} 张图片`);
         });
 
@@ -1959,93 +2037,144 @@ export class EditorUI {
             return;
         }
 
-        el.innerHTML = list.map((r) => `
-            <div class="img-res-item" style="display:flex; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid #333;">
-                <div style="width:34px;height:34px;border:1px solid #444;border-radius:4px;overflow:hidden;background:#222;flex-shrink:0;">
-                    <img src="${this._escapeAttr(r.url)}" style="width:100%;height:100%;object-fit:cover;display:block;">
+        // 虚拟滚动：资源过多时避免一次性创建大量 DOM
+        el.style.maxHeight = '320px';
+        el.style.overflowY = 'auto';
+        el.style.position = 'relative';
+        el.style.paddingRight = '6px';
+
+        const rowH = 66; // 近似行高（包含 padding / border）
+        const totalH = list.length * rowH;
+        const render = () => {
+            const scrollTop = el.scrollTop || 0;
+            const viewH = el.clientHeight || 320;
+            const start = Math.max(0, Math.floor(scrollTop / rowH) - 6);
+            const end = Math.min(list.length, Math.ceil((scrollTop + viewH) / rowH) + 6);
+
+            const visible = list.slice(start, end);
+            el.innerHTML = `
+                <div style="height:${totalH}px; position:relative;">
+                    ${visible
+                        .map((r, idx) => {
+                            const realIndex = start + idx;
+                            const top = realIndex * rowH;
+                            return `
+                                <div class="img-res-item" data-idx="${realIndex}" style="position:absolute; left:0; right:0; top:${top}px; display:flex; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid #333;">
+                                    <div style="width:34px;height:34px;border:1px solid #444;border-radius:4px;overflow:hidden;background:#222;flex-shrink:0;">
+                                        <img src="${this._escapeAttr(r.url)}" style="width:100%;height:100%;object-fit:cover;display:block;">
+                                    </div>
+                                    <div style="flex:1; min-width:0;">
+                                        <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${this._escapeAttr(r.name)}">${this._escapeHtml(r.name)}</div>
+                                        <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+                                            <button type="button" class="btn-img-apply" style="padding:3px 6px;background:#2196F3;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;">应用</button>
+                                            <button type="button" class="btn-img-rename" style="padding:3px 6px;background:#666;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;">改名</button>
+                                            <button type="button" class="btn-img-del" style="padding:3px 6px;background:#e74c3c;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;">删</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        })
+                        .join('')}
                 </div>
-                <div style="flex:1; min-width:0;">
-                    <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${this._escapeAttr(r.name)}">${this._escapeHtml(r.name)}</div>
-                    <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
-                        <button type="button" class="btn-img-apply" style="padding:3px 6px;background:#2196F3;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;">应用</button>
-                        <button type="button" class="btn-img-rename" style="padding:3px 6px;background:#666;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;">改名</button>
-                        <button type="button" class="btn-img-del" style="padding:3px 6px;background:#e74c3c;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;">删</button>
-                    </div>
-                </div>
-            </div>
-        `).join('');
+            `;
 
-        const items = Array.from(el.querySelectorAll('.img-res-item'));
-        items.forEach((itemEl, i) => {
-            const res = list[i];
-            const applyBtn = itemEl.querySelector('.btn-img-apply');
-            const renameBtn = itemEl.querySelector('.btn-img-rename');
-            const delBtn = itemEl.querySelector('.btn-img-del');
+            const items = Array.from(el.querySelectorAll('.img-res-item'));
+            items.forEach((itemEl) => {
+                const i = parseInt(itemEl.getAttribute('data-idx') || '0', 10);
+                const res = list[i];
+                const applyBtn = itemEl.querySelector('.btn-img-apply');
+                const renameBtn = itemEl.querySelector('.btn-img-rename');
+                const delBtn = itemEl.querySelector('.btn-img-del');
 
-            if (applyBtn) {
-                applyBtn.addEventListener('click', async () => {
-                    const obj = this.engine.selectedObject;
-                    if (!obj || obj.type !== 'sprite') {
-                        this.updateStatus('请先选中一个精灵（Sprite）再应用贴图');
-                        return;
-                    }
-                    obj.properties.textureName = res.name;
-                    await this.recreateSprite(obj);
-                    this.updatePropertiesPanel(obj);
-                    this.updateStatus('已应用贴图: ' + res.name);
-                });
-            }
-
-            if (renameBtn) {
-                renameBtn.addEventListener('click', () => {
-                    const next = prompt('新名称（用于贴图引用）', res.name);
-                    if (!next || next === res.name) return;
-                    if (this.engine.resourceManager.getTexture(next)) {
-                        this.updateStatus('名称已存在: ' + next);
-                        return;
-                    }
-                    // rename: 复制映射并删除旧名
-                    const tex = this.engine.resourceManager.getTexture(res.name);
-                    if (tex) {
-                        this.engine.resourceManager.textures.set(next, tex);
-                    }
-                    this.engine.resourceManager.loadedImages.set(next, res.url);
-                    this.engine.resourceManager.removeResource(res.name);
-
-                    // 更新引用（Sprite.textureName）
-                    this.engine.gameObjects.forEach((o) => {
-                        if (o.properties && o.properties.textureName === res.name) {
-                            o.properties.textureName = next;
+                if (applyBtn) {
+                    applyBtn.addEventListener('click', async () => {
+                        const obj = this.engine.selectedObject;
+                        if (!obj || (obj.type !== 'sprite' && obj.type !== 'nineSlice')) {
+                            this.updateStatus('请先选中精灵或九宫格对象再应用贴图');
+                            return;
                         }
+                        obj.properties.textureName = res.name;
+                        if (obj.type === 'sprite') {
+                            await this.recreateSprite(obj);
+                        } else {
+                            this.engine.updateObjectProperties(obj, { textureName: res.name });
+                        }
+                        this.updatePropertiesPanel(obj);
+                        this.updateStatus('已应用贴图: ' + res.name);
                     });
+                }
 
-                    this.refreshImageResourceList();
-                    if (this.engine.selectedObject) {
-                        this.updatePropertiesPanel(this.engine.selectedObject);
-                    }
-                    this.updateStatus('已重命名: ' + res.name + ' → ' + next);
-                });
-            }
-
-            if (delBtn) {
-                delBtn.addEventListener('click', async () => {
-                    if (!confirm('删除图片资源：' + res.name + ' ？')) return;
-                    this.engine.resourceManager.removeResource(res.name);
-                    // 清理引用并重建 sprite
-                    for (const o of this.engine.gameObjects) {
-                        if (o.type === 'sprite' && o.properties.textureName === res.name) {
-                            o.properties.textureName = null;
-                            await this.recreateSprite(o);
+                if (renameBtn) {
+                    renameBtn.addEventListener('click', () => {
+                        const next = prompt('新名称（用于贴图引用）', res.name);
+                        if (!next || next === res.name) return;
+                        if (this.engine.resourceManager.getTexture(next)) {
+                            this.updateStatus('名称已存在: ' + next);
+                            return;
                         }
-                    }
-                    this.refreshImageResourceList();
-                    if (this.engine.selectedObject) {
-                        this.updatePropertiesPanel(this.engine.selectedObject);
-                    }
-                    this.updateStatus('已删除图片: ' + res.name);
-                });
-            }
-        });
+                        // rename: 复制映射并删除旧名
+                        const tex = this.engine.resourceManager.getTexture(res.name);
+                        if (tex) {
+                            this.engine.resourceManager.textures.set(next, tex);
+                        }
+                        this.engine.resourceManager.loadedImages.set(next, res.url);
+                        this.engine.resourceManager.removeResource(res.name);
+
+                        // 更新引用（textureName）
+                        this.engine.gameObjects.forEach((o) => {
+                            if (o.properties && o.properties.textureName === res.name) {
+                                o.properties.textureName = next;
+                            }
+                        });
+
+                        this.refreshImageResourceList();
+                        if (this.engine.selectedObject) {
+                            this.updatePropertiesPanel(this.engine.selectedObject);
+                        }
+                        this.updateStatus('已重命名: ' + res.name + ' → ' + next);
+                    });
+                }
+
+                if (delBtn) {
+                    delBtn.addEventListener('click', async () => {
+                        // 资源引用计数（最小可用）：统计当前场景内 textureName 引用次数
+                        const usedBy = this.engine.gameObjects.filter(
+                            (o) => o && o.properties && o.properties.textureName === res.name
+                        );
+                        const tip =
+                            usedBy.length > 0
+                                ? `该贴图正在被 ${usedBy.length} 个对象引用，删除会清空这些引用并重建精灵。`
+                                : '未发现对象引用该贴图。';
+                        if (!confirm(`删除图片资源：${res.name} ？\n\n${tip}`)) return;
+                        this.engine.resourceManager.removeResource(res.name);
+                        // 清理引用并重建 sprite
+                        for (const o of usedBy) {
+                            if (o.type === 'sprite') {
+                                o.properties.textureName = null;
+                                await this.recreateSprite(o);
+                            } else {
+                                o.properties.textureName = null;
+                            }
+                        }
+                        this.refreshImageResourceList();
+                        if (this.engine.selectedObject) {
+                            this.updatePropertiesPanel(this.engine.selectedObject);
+                        }
+                        this.updateStatus('已删除图片: ' + res.name);
+                    });
+                }
+            });
+        };
+
+        // 避免重复绑定 scroll 事件
+        if (!this._imgResVirtBound) {
+            this._imgResVirtBound = true;
+            el.addEventListener('scroll', () => {
+                if (this._imgResVirtRaf) cancelAnimationFrame(this._imgResVirtRaf);
+                this._imgResVirtRaf = requestAnimationFrame(render);
+            });
+        }
+        render();
     }
 
     setupLayerPanel() {
@@ -2276,6 +2405,7 @@ export class EditorUI {
                     const nn = prompt('场景名称', row?.name || '');
                     if (nn === null || !nn.trim()) return;
                     sm.renameScene(id, nn.trim());
+                    this.updateStatus('已改名场景: ' + nn.trim());
                     this.refreshSceneSlotList();
                 });
             });
@@ -2307,10 +2437,16 @@ export class EditorUI {
         return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     }
 
-    _buildStandaloneGameHtml(sceneData) {
-        // 防止 </script> 截断
-        const sceneJson = JSON.stringify(sceneData).replace(/<\/script>/gi, '<\\/script>');
+    async _fetchStandaloneRuntimeJs() {
+        const res = await fetch(`${import.meta.env.BASE_URL}sge-standalone.js`, { cache: 'no-store' });
+        if (!res.ok) {
+            throw new Error('找不到 sge-standalone.js，请先执行 npm run build:standalone');
+        }
+        return res.text();
+    }
 
+    _buildStandaloneHtmlDocument(sceneData, runtimeJs) {
+        const sceneJson = JSON.stringify(sceneData).replace(/<\/script>/gi, '<\\/script>');
         return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2323,272 +2459,51 @@ export class EditorUI {
     .tip { position: fixed; left: 10px; bottom: 10px; z-index: 9; color: #aaa; font-size: 12px;
       background: rgba(0,0,0,0.35); border: 1px solid #333; border-radius: 8px; padding: 6px 10px; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
 </head>
 <body>
   <div id="root"></div>
-  <div class="tip">提示：首次播放音频可能需要点击一次页面（浏览器限制）。</div>
+  <div class="tip">单文件分享：可发他人双击打开。音频可能需先点击页面一次。</div>
   <script id="scene-data" type="application/json">${sceneJson}</script>
+  <script>${runtimeJs}</script>
   <script>
   (function () {
-    const scene = JSON.parse(document.getElementById('scene-data').textContent);
-
-    // ====== 资源 ======
-    const textures = new Map();
-    const audioClips = new Map();
-    (scene.imageResources || []).forEach(r => { if (r && r.name && r.url) textures.set(r.name, PIXI.Texture.from(r.url)); });
-    (scene.audioResources || []).forEach(a => { if (a && a.name && a.url) audioClips.set(a.name, a.url); });
-
-    // ====== 输入 ======
-    const input = {
-      keys: {}, keysPressed: {}, keysReleased: {},
-      mouseX: 0, mouseY: 0, mouseButtons: {}, mouseButtonsPressed: {}, mouseButtonsReleased: {},
-      update() { this.keysPressed = {}; this.keysReleased = {}; this.mouseButtonsPressed = {}; this.mouseButtonsReleased = {}; },
-      isKeyDown(k){ return this.keys[k]===true; },
-      isKeyPressed(k){ return this.keysPressed[k]===true; },
-      isKeyReleased(k){ return this.keysReleased[k]===true; },
-      isMouseDown(b=0){ return this.mouseButtons[b]===true; },
-      isMousePressed(b=0){ return this.mouseButtonsPressed[b]===true; },
-      isMouseReleased(b=0){ return this.mouseButtonsReleased[b]===true; },
-      getMousePosition(){ return { x:this.mouseX, y:this.mouseY }; }
-    };
-    window.addEventListener('keydown', (e)=>{ if(!input.keys[e.key]) input.keysPressed[e.key]=true; input.keys[e.key]=true; });
-    window.addEventListener('keyup', (e)=>{ input.keys[e.key]=false; input.keysReleased[e.key]=true; });
-    window.addEventListener('mousemove', (e)=>{ input.mouseX=e.clientX; input.mouseY=e.clientY; });
-    window.addEventListener('mousedown', (e)=>{ if(!input.mouseButtons[e.button]) input.mouseButtonsPressed[e.button]=true; input.mouseButtons[e.button]=true; });
-    window.addEventListener('mouseup', (e)=>{ input.mouseButtons[e.button]=false; input.mouseButtonsReleased[e.button]=true; });
-
-    // ====== 音频 ======
-    let musicEl = null;
-    function playSound(name, vol=1, loop=false, rate=1){
-      const url = audioClips.get(name); if(!url) return;
-      const a = new Audio(url); a.volume=Math.max(0,Math.min(1,vol)); a.loop=!!loop; a.playbackRate=rate||1;
-      a.play().catch(()=>{});
+    var el = document.getElementById('scene-data');
+    var scene = JSON.parse(el.textContent);
+    if (typeof window.__SGE_RUN__ !== 'function') {
+      document.body.innerHTML = '<pre style="color:#f88;padding:20px">运行时未加载</pre>';
+      return;
     }
-    function playMusic(name, vol=0.7, loop=true){
-      const url = audioClips.get(name); if(!url) return;
-      if(musicEl){ musicEl.pause(); musicEl=null; }
-      const a = new Audio(url); a.volume=Math.max(0,Math.min(1,vol)); a.loop=!!loop; musicEl=a;
-      a.play().catch(()=>{});
-    }
-    function stopMusic(){ if(musicEl){ musicEl.pause(); musicEl.currentTime=0; musicEl=null; } }
-
-    // ====== Pixi 初始化 ======
-    const root = document.getElementById('root');
-    const app = new PIXI.Application({ width: root.clientWidth || window.innerWidth, height: root.clientHeight || window.innerHeight,
-      backgroundColor: 0x111111, antialias: true, resolution: window.devicePixelRatio||1, autoDensity: true });
-    root.appendChild(app.view);
-    app.view.style.width='100%'; app.view.style.height='100%'; app.view.style.display='block';
-    window.addEventListener('resize', ()=>{ app.renderer.resize(root.clientWidth||window.innerWidth, root.clientHeight||window.innerHeight); });
-    if (scene.project && scene.project.targetFPS > 0 && app.ticker) {
-      app.ticker.maxFPS = scene.project.targetFPS;
-    }
-
-    const world = new PIXI.Container();
-    app.stage.addChild(world);
-
-    // ====== 对象构建 ======
-    const gameObjects = [];
-    function makeObj(data){
-      const p = data.properties || {};
-      let disp = null;
-      if(data.type==='sprite'){
-        if(p.textureName && textures.get(p.textureName)){
-          disp = new PIXI.Sprite(textures.get(p.textureName));
-          disp.width = p.width || disp.width; disp.height = p.height || disp.height;
-        } else {
-          const g = new PIXI.Graphics();
-          g.beginFill(p.color || 0x3498db); g.drawRect(0,0,p.width||100,p.height||100); g.endFill();
-          disp = g;
-        }
-      } else if(data.type==='rectangle'){
-        const g = new PIXI.Graphics();
-        g.beginFill(p.color || 0xe74c3c); g.drawRect(0,0,p.width||100,p.height||100); g.endFill();
-        disp = g;
-      } else if(data.type==='circle'){
-        const g = new PIXI.Graphics(); const r = p.radius||50;
-        g.beginFill(p.color || 0x2ecc71); g.drawCircle(r,r,r); g.endFill();
-        disp = g;
-      } else if(data.type==='text'){
-        disp = new PIXI.Text(p.text||'文本', { fontFamily: p.fontFamily||'Arial', fontSize: p.fontSize||24, fill: p.color||0xffffff, align: p.align||'left' });
-      } else if(data.type==='container'){
-        disp = new PIXI.Container();
-      } else {
-        disp = new PIXI.Container();
-      }
-      disp.x = p.x||100; disp.y = p.y||100;
-      disp.alpha = (p.alpha!==undefined)?p.alpha:1;
-      disp.rotation = ((p.rotation||0) * Math.PI/180);
-      if(disp.scale && (p.scaleX!==undefined || p.scaleY!==undefined)) disp.scale.set(p.scaleX||1,p.scaleY||1);
-      return { id:data.id, type:data.type, properties:p, parentId:data.parentId||null, displayObject:disp };
-    }
-    (scene.objects||[]).forEach(o=>{ const obj = makeObj(o); gameObjects.push(obj); world.addChild(obj.displayObject); });
-    // 父子
-    (scene.objects||[]).forEach(o=>{
-      if(!o.parentId) return;
-      const child = gameObjects.find(x=>x.id===o.id);
-      const parent = gameObjects.find(x=>x.id===o.parentId);
-      if(child && parent && parent.type==='container'){
-        if(child.displayObject.parent) child.displayObject.parent.removeChild(child.displayObject);
-        parent.displayObject.addChild(child.displayObject);
-        child.displayObject.x = child.properties.x ?? 0;
-        child.displayObject.y = child.properties.y ?? 0;
-      }
-    });
-
-    // ====== 动画（帧动画）=====
-    const animMap = new Map();
-    const animList = (scene.animations && scene.animations.animations) || [];
-    animList.forEach(a=>{
-      const frames = (a.frames||[]).map(n=>textures.get(n)).filter(Boolean);
-      if(frames.length) animMap.set(a.name, frames);
-    });
-    gameObjects.forEach(obj=>{
-      if(obj.type==='sprite' && obj.properties.animationName && animMap.get(obj.properties.animationName)){
-        const frames = animMap.get(obj.properties.animationName);
-        const as = new PIXI.AnimatedSprite(frames);
-        as.animationSpeed = obj.properties.animSpeed || 0.1;
-        as.loop = true;
-        as.x = obj.displayObject.x; as.y = obj.displayObject.y;
-        as.width = obj.properties.width || as.width;
-        as.height = obj.properties.height || as.height;
-        const parent = obj.displayObject.parent; const idx = parent.getChildIndex(obj.displayObject);
-        parent.removeChild(obj.displayObject); parent.addChildAt(as, idx);
-        obj.displayObject = as; as.play();
-      }
-    });
-
-    // ====== 行为系统（条件/动作）=====
-    const behaviors = ((scene.behaviors||{}).behaviors)||[];
-    function compare(actual, op, expected){
-      switch(op){
-        case '>': return actual>expected;
-        case '<': return actual<expected;
-        case '>=': return actual>=expected;
-        case '<=': return actual<=expected;
-        case '==': return Math.abs(actual-expected)<0.01;
-        case '!=': return Math.abs(actual-expected)>=0.01;
-        default: return true;
-      }
-    }
-    function isMouseOverObject(go){
-      const mp = input.getMousePosition();
-      const b = go.displayObject.getBounds();
-      return mp.x>=b.x && mp.x<=b.x+b.width && mp.y>=b.y && mp.y<=b.y+b.height;
-    }
-    function pairKey(id1,id2){ return id1<id2 ? id1+'|'+id2 : id2+'|'+id1; }
-    var collisionPairEnd = new Set();
-    function checkAABB(a,b){
-      const x1=a.displayObject.x, y1=a.displayObject.y, w1=a.properties.width||50, h1=a.properties.height||50;
-      const x2=b.displayObject.x, y2=b.displayObject.y, w2=b.properties.width||50, h2=b.properties.height||50;
-      return x1 < x2+w2 && x1+w1 > x2 && y1 < y2+h2 && y1+h1 > y2;
-    }
-    function checkConditions(go, conds, collisionBaseline){
-      if(!conds||!conds.length) return true;
-      return conds.every(c=>{
-        const obj=go.displayObject;
-        switch(c.type){
-          case 'positionX': return compare(obj.x, c.operator, c.value);
-          case 'positionY': return compare(obj.y, c.operator, c.value);
-          case 'alpha': return compare(obj.alpha, c.operator, c.value);
-          case 'rotation': return compare(obj.rotation*180/Math.PI, c.operator, c.value);
-          case 'keyPressed': return input.isKeyDown(c.key);
-          case 'keyJustPressed': return input.isKeyPressed(c.key);
-          case 'keyReleased': return input.isKeyReleased(c.key);
-          case 'mouseClicked': return input.isMousePressed(0);
-          case 'mouseDown': return input.isMouseDown(0);
-          case 'mouseReleased': return input.isMouseReleased(0);
-          case 'mouseHover': return isMouseOverObject(go);
-          case 'mouseX': return compare(input.getMousePosition().x, c.operator, c.value);
-          case 'mouseY': return compare(input.getMousePosition().y, c.operator, c.value);
-          case 'collision': {
-            const arr = gameObjects.filter(o=>o.properties.tag===c.tag && o.id!==go.id);
-            return arr.some(o=>checkAABB(go,o));
-          }
-          case 'collisionEnter': {
-            const arr = gameObjects.filter(o=>o.properties.tag===c.tag && o.id!==go.id);
-            return arr.some(o=>checkAABB(go,o) && !collisionBaseline.has(pairKey(go.id,o.id)));
-          }
-          default: return true;
-        }
-      });
-    }
-    function execAction(go, a){
-      const obj=go.displayObject, p=go.properties, ps=a.params||{};
-      switch(a.type){
-        case 'move': obj.x += ps.deltaX||0; obj.y += ps.deltaY||0; p.x=obj.x; p.y=obj.y; break;
-        case 'setPosition': obj.x = (ps.x!==undefined)?ps.x:obj.x; obj.y = (ps.y!==undefined)?ps.y:obj.y; p.x=obj.x; p.y=obj.y; break;
-        case 'rotate': obj.rotation += (ps.angle||0) * Math.PI/180; p.rotation = obj.rotation*180/Math.PI; break;
-        case 'fadeIn': obj.alpha = Math.min(1, obj.alpha+0.02); p.alpha=obj.alpha; break;
-        case 'fadeOut': obj.alpha = Math.max(0, obj.alpha-0.02); p.alpha=obj.alpha; break;
-        case 'playAnimation': if(obj.play) obj.play(); break;
-        case 'stopAnimation': if(obj.stop) obj.stop(); break;
-        case 'gotoFrame': if(obj.gotoAndStop) obj.gotoAndStop(ps.frame||0); break;
-        case 'playSound': playSound(ps.name, ps.volume??1, !!ps.loop, ps.playbackRate??1); break;
-        case 'playMusic': playMusic(ps.name, ps.volume??0.7, ps.loop!==undefined?!!ps.loop:true); break;
-        case 'stopMusic': stopMusic(); break;
-      }
-    }
-    function execBehavior(b, collisionBaseline){
-      if(!b.enabled) return;
-      const go = gameObjects.find(o=>o.id===b.objectId);
-      if(!go) return;
-      const baseline = collisionBaseline || new Set();
-      if(!checkConditions(go, b.conditions, baseline)) return;
-      (b.actions||[]).forEach(a=>execAction(go,a));
-      (b.subEvents||[]).forEach(id=>{
-        const sb = behaviors.find(x=>x.id===id);
-        if(sb) execBehavior(sb, baseline);
-      });
-    }
-
-    // start 事件
-    behaviors.filter(b=>b.eventType==='start' && b.enabled).forEach(b=>execBehavior(b, new Set()));
-
-    const cam = scene.camera || {};
-    function stepCamera(){
-      if(!cam.enabled || !cam.followTargetId) return;
-      const go = gameObjects.find(o=>o.id===cam.followTargetId);
-      if(!go) return;
-      const p = new PIXI.Point();
-      go.displayObject.getGlobalPosition(p);
-      const sw = app.screen.width, sh = app.screen.height;
-      const dx = sw/2 - p.x, dy = sh/2 - p.y;
-      const sm = (cam.smoothing !== undefined && cam.smoothing !== null) ? cam.smoothing : 0.12;
-      const dt = app.ticker.deltaTime / 60;
-      const k = 1 - Math.pow(1 - Math.min(1, sm), dt * 60);
-      world.x += dx * k;
-      world.y += dy * k;
-      if(cam.bounds && cam.bounds.width > 0 && cam.bounds.height > 0){
-        const b = cam.bounds;
-        let minX = sw - (b.x + b.width), maxX = -b.x;
-        if(minX > maxX){ const t=(minX+maxX)/2; minX=maxX=t; }
-        let minY = sh - (b.y + b.height), maxY = -b.y;
-        if(minY > maxY){ const t=(minY+maxY)/2; minY=maxY=t; }
-        world.x = Math.max(minX, Math.min(maxX, world.x));
-        world.y = Math.max(minY, Math.min(maxY, world.y));
-      }
-    }
-
-    // update 循环（collisionEnter 与编辑器逻辑一致：对比上一帧碰撞对）
-    app.ticker.add(()=>{
-      const collisionBaseline = new Set(collisionPairEnd);
-      behaviors.filter(b=>b.eventType==='update' && b.enabled).forEach(b=>execBehavior(b, collisionBaseline));
-      collisionPairEnd = new Set();
-      for (var ii=0; ii<gameObjects.length; ii++) {
-        for (var jj=ii+1; jj<gameObjects.length; jj++) {
-          if (checkAABB(gameObjects[ii], gameObjects[jj])) {
-            collisionPairEnd.add(pairKey(gameObjects[ii].id, gameObjects[jj].id));
-          }
-        }
-      }
-      input.update();
-      stepCamera();
+    window.__SGE_RUN__(scene).catch(function (e) {
+      console.error(e);
+      document.body.innerHTML = '<pre style="color:#f88;padding:16px;font:13px monospace;white-space:pre-wrap">' +
+        (e && e.stack ? e.stack : String(e)) + '</pre>';
     });
   })();
   </script>
 </body>
 </html>`;
+    }
+
+    /** 导出单文件 game.html（内嵌场景 + 完整运行时，可离线分享） */
+    async exportStandaloneHtml() {
+        if (this.engine.isRunning) return;
+        this.updateStatus('正在打包独立 HTML…');
+        try {
+            const runtimeJs = await this._fetchStandaloneRuntimeJs();
+            const sceneData = this.engine.exportScene();
+            const html = this._buildStandaloneHtmlDocument(sceneData, runtimeJs);
+            const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'game.html';
+            a.click();
+            URL.revokeObjectURL(url);
+            this.updateStatus('已导出 game.html（单文件可分享）');
+        } catch (e) {
+            console.error(e);
+            this.updateStatus('导出 HTML 失败：' + (e.message || String(e)));
+        }
     }
 
     /**
@@ -2706,17 +2621,16 @@ export class EditorUI {
             
             // G: 切换网格
             if (e.key === 'g' || e.key === 'G') {
-                this.engine.gridSystem.toggle();
-                this.updateStatus(`网格${this.engine.gridSystem.enabled ? '已显示' : '已隐藏'}`);
-            }
-
-            // R: 变换控件 缩放+旋转 / 仅旋转
-            if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey && !e.altKey) {
                 const tag = (e.target && e.target.tagName) || '';
                 if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-                if (this.engine.isRunning) return;
-                e.preventDefault();
-                this.engine.transformControls.toggleGizmoMode();
+                this.engine.gridSystem.toggle();
+                const gs = document.getElementById('grid-cell-size');
+                if (gs) gs.value = String(this.engine.gridSystem.gridSize);
+                this.updateStatus(
+                    this.engine.gridSystem.visible
+                        ? `网格已显示（间距 ${this.engine.gridSystem.gridSize}）`
+                        : '网格已隐藏'
+                );
             }
         });
     }

@@ -11,6 +11,7 @@ import { TweenSystem } from '../TweenSystem.js';
 import { AudioManager } from '../AudioManager.js';
 import { CameraManager } from '../CameraManager.js';
 import { PhysicsSystem } from '../PhysicsSystem.js';
+import { LayerManager } from '../LayerManager.js';
 
 /**
  * 纯运行时播放器：加载 sceneData 并直接游玩（无编辑 UI）
@@ -68,6 +69,7 @@ export class RuntimePlayer {
             }
         });
         this._restoreParenting(sceneData);
+        LayerManager.assignZOrder(this.gameObjects, sceneData.layers || { layers: [{ id: 'layer_default' }] });
         this._setupPlatformerBehaviors();
 
         // 启动物理系统（Matter.js）
@@ -124,6 +126,7 @@ export class RuntimePlayer {
         canvas.style.display = 'block';
 
         this.world = new PIXI.Container();
+        this.world.sortableChildren = true;
         this.app.stage.addChild(this.world);
 
         window.addEventListener('resize', () => {
@@ -170,12 +173,10 @@ export class RuntimePlayer {
             if (!objData.parentId) continue;
             const child = this.gameObjects.find((g) => g.id === objData.id);
             const parent = this.gameObjects.find((g) => g.id === objData.parentId);
-            if (child && parent && (parent.type === 'container' || parent.type === 'scrollView')) {
+            if (child && parent && parent.type === 'container') {
                 // 使用存档中的局部坐标挂载
                 if (child.displayObject.parent) child.displayObject.parent.removeChild(child.displayObject);
-                const target =
-                    parent.type === 'scrollView' && parent._scrollContent ? parent._scrollContent : parent.displayObject;
-                target.addChild(child.displayObject);
+                parent.displayObject.addChild(child.displayObject);
                 child.displayObject.x = child.properties.x ?? 0;
                 child.displayObject.y = child.properties.y ?? 0;
             }
@@ -287,36 +288,26 @@ export class RuntimePlayer {
             gameObject.properties.rotation = properties.rotation;
         }
 
-        if (gameObject.type === 'scrollView') {
-            const props = gameObject.properties;
-            if (properties.width !== undefined) props.width = properties.width;
-            if (properties.height !== undefined) props.height = properties.height;
-            if (properties.contentHeight !== undefined) props.contentHeight = properties.contentHeight;
-            if (properties.wheelEnabled !== undefined) props.wheelEnabled = !!properties.wheelEnabled;
-            if (properties.scrollY !== undefined) props.scrollY = properties.scrollY;
-            const w = props.width || 260;
-            const h = props.height || 180;
-            const maxScroll = Math.max(0, (props.contentHeight || 0) - h);
-            props.scrollY = Math.max(0, Math.min(maxScroll, props.scrollY || 0));
-            if (gameObject._scrollMask && gameObject._scrollMask.clear) {
-                gameObject._scrollMask.clear();
-                gameObject._scrollMask.beginFill(0xffffff);
-                gameObject._scrollMask.drawRect(0, 0, w, h);
-                gameObject._scrollMask.endFill();
+        if (gameObject.type === 'text') {
+            const t = /** @type {PIXI.Text} */ (obj);
+            if (properties.text !== undefined) {
+                t.text = properties.text;
+                gameObject.properties.text = properties.text;
             }
-            const bg = obj.children && obj.children[0];
-            if (bg && bg.clear) {
-                bg.clear();
-                bg.lineStyle(2, 0x888888, 0.8);
-                bg.beginFill(0x000000, 0.15);
-                bg.drawRoundedRect(0, 0, w, h, 6);
-                bg.endFill();
+            if (properties.fontSize !== undefined) {
+                t.style.fontSize = properties.fontSize;
+                gameObject.properties.fontSize = properties.fontSize;
             }
-            obj.hitArea = new PIXI.Rectangle(0, 0, w, h);
-            if (gameObject._scrollContent) {
-                gameObject._scrollContent.y = -(props.scrollY || 0);
+            if (properties.fontFamily !== undefined) {
+                t.style.fontFamily = properties.fontFamily || 'Arial';
+                gameObject.properties.fontFamily = properties.fontFamily;
+            }
+            if (properties.color !== undefined) {
+                t.style.fill = properties.color;
+                gameObject.properties.color = properties.color;
             }
         }
+
     }
 
     createGameObject(type, properties = {}, _saveHistory = false) {
@@ -332,6 +323,8 @@ export class RuntimePlayer {
                 rotation: properties.rotation || 0,
                 scaleX: properties.scaleX || 1,
                 scaleY: properties.scaleY || 1,
+                layerId: properties.layerId || 'layer_default',
+                z: properties.z !== undefined ? properties.z : 0,
                 ...properties
             },
             displayObject: null,
@@ -371,9 +364,6 @@ export class RuntimePlayer {
                 break;
             case 'nineSlice':
                 gameObject.displayObject = this._createNineSlice(gameObject.properties);
-                break;
-            case 'scrollView':
-                gameObject.displayObject = this._createScrollView(gameObject);
                 break;
             default:
                 return null;
@@ -601,46 +591,6 @@ export class RuntimePlayer {
         plane.alpha = props.alpha !== undefined ? props.alpha : 1;
         plane.rotation = (props.rotation || 0) * Math.PI / 180;
         return plane;
-    }
-
-    _createScrollView(gameObject) {
-        const props = gameObject.properties;
-        const w = props.width || 260;
-        const h = props.height || 180;
-        const c = new PIXI.Container();
-        c.x = props.x;
-        c.y = props.y;
-        c.alpha = props.alpha !== undefined ? props.alpha : 1;
-        c.rotation = (props.rotation || 0) * Math.PI / 180;
-
-        const bg = new PIXI.Graphics();
-        bg.lineStyle(2, 0x888888, 0.8);
-        bg.beginFill(0x000000, 0.15);
-        bg.drawRoundedRect(0, 0, w, h, 6);
-        bg.endFill();
-
-        const content = new PIXI.Container();
-        const mask = new PIXI.Graphics();
-        mask.beginFill(0xffffff);
-        mask.drawRect(0, 0, w, h);
-        mask.endFill();
-        content.mask = mask;
-
-        c.addChild(bg, content, mask);
-        c.hitArea = new PIXI.Rectangle(0, 0, w, h);
-        c.eventMode = 'static';
-
-        gameObject._scrollContent = content;
-        gameObject._scrollMask = mask;
-
-        c.on('wheel', (e) => {
-            if (props.wheelEnabled === false) return;
-            const delta = e.deltaY || 0;
-            this.updateObjectProperties(gameObject, { scrollY: (props.scrollY || 0) + delta });
-        });
-
-        this.updateObjectProperties(gameObject, { scrollY: props.scrollY || 0 });
-        return c;
     }
 }
 

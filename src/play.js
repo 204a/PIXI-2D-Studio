@@ -36,7 +36,7 @@ try {
 }
 
 async function loadSceneFallback() {
-  // 发布模式：同目录提供 scene.json
+  // 静态托管：与 play.html 同目录放置 scene.json
   try {
     const res = await fetch('/scene.json', { cache: 'no-store' });
     if (!res.ok) return null;
@@ -52,7 +52,7 @@ async function loadSceneFallback() {
   }
 
   if (!sceneData) {
-    showEmpty('未找到场景：请在编辑器点击「🎮 游玩」或在发布目录放置 scene.json。');
+    showEmpty('未找到场景：请在编辑器点击「🎮 游玩」，或与 play.html 同目录放置导出的 scene.json。');
     return;
   }
 

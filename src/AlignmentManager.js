@@ -7,7 +7,8 @@ import * as PIXI from 'pixi.js';
 export class AlignmentManager {
     constructor(engine) {
         this.engine = engine;
-        this.snapDistance = 5; // 吸附距离（像素）
+        /** 贴合阈值（像素）：过大则像磁贴一样难以挣脱，过小则难对齐；约 2～3 较均衡 */
+        this.snapDistance = 3;
         this.showGuides = true; // 显示辅助线
         this.guides = []; // 辅助线列表
         this.guideGraphics = null;
@@ -378,8 +379,10 @@ export class AlignmentManager {
     
     /**
      * 智能吸附 - 拖动时自动对齐到其他对象
+     * @param {number|null} proposedX 若不传则用当前坐标；传入指针推算的目标 x/y，吸附判定才与手感一致
+     * @param {number|null} proposedY
      */
-    snapToObjects(movingObject, otherObjects = null) {
+    snapToObjects(movingObject, otherObjects = null, proposedX = null, proposedY = null) {
         // 如果禁用吸附或按住Shift键，不进行吸附
         if (!this.showGuides || !this.snapEnabled) return null;
         
@@ -388,7 +391,21 @@ export class AlignmentManager {
         );
         
         if (others.length === 0) return null;
-        
+
+        const disp = movingObject.displayObject;
+        const prevX = disp.x;
+        const prevY = disp.y;
+        const useProposed =
+            proposedX != null &&
+            proposedY != null &&
+            Number.isFinite(proposedX) &&
+            Number.isFinite(proposedY);
+        try {
+        if (useProposed) {
+            disp.x = proposedX;
+            disp.y = proposedY;
+        }
+
         const movingBounds = movingObject.displayObject.getBounds();
         const movingCenterX = movingBounds.x + movingBounds.width / 2;
         const movingCenterY = movingBounds.y + movingBounds.height / 2;
@@ -465,6 +482,12 @@ export class AlignmentManager {
         this.drawGuides();
         
         return { snapX, snapY };
+        } finally {
+            if (useProposed) {
+                disp.x = prevX;
+                disp.y = prevY;
+            }
+        }
     }
     
     /**

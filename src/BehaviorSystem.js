@@ -1,5 +1,6 @@
 /**
- * 可视化编程系统 - 事件和行为管理
+ * 可视化编程（ECA）：事件类型 + 条件列表 + 动作列表；可选子事件。
+ * 运行时每帧：用「上一帧结束时的碰撞对」判断 collisionEnter → 执行 update 行为 → 再刷新碰撞对。
  */
 
 export class BehaviorSystem {
@@ -7,10 +8,20 @@ export class BehaviorSystem {
         this.engine = engine;
         this.behaviors = []; // 所有行为规则
         this.isRunning = false;
-        /** @type {Set<string>} 每帧结束时的碰撞对；下一帧开始复制为基线，供 collisionEnter */
+        /** 每帧结束时的碰撞对；下一帧开始复制为基线，供 collisionEnter */
         this._collisionPairEnd = new Set();
-        /** @type {Set<string>} 本帧“进入碰撞”判定用（上一帧结束时的对） */
+        /** 本帧 collisionEnter 判定用（上一帧结束时的对） */
         this._collisionEnterBaseline = new Set();
+        /** 每帧 id → GameObject，避免 execute 里反复 find */
+        this._objectById = new Map();
+    }
+
+    /** 找到本条行为作用的对象；tick 内传入 map，其它场景不传则用线性查找 */
+    _resolveTargetObject(behavior, objectById) {
+        if (objectById) {
+            return objectById.get(behavior.objectId) ?? null;
+        }
+        return this.engine.gameObjects.find((o) => o.id === behavior.objectId) ?? null;
     }
 
     static _pairKey(idA, idB) {
@@ -100,7 +111,8 @@ export class BehaviorSystem {
     }
 
     _rebuildCollisionPairsEnd() {
-        const pairs = new Set();
+        const pairs = this._collisionPairEnd;
+        pairs.clear();
         const objs = this.engine.gameObjects;
         for (let i = 0; i < objs.length; i++) {
             for (let j = i + 1; j < objs.length; j++) {
@@ -109,7 +121,6 @@ export class BehaviorSystem {
                 }
             }
         }
-        this._collisionPairEnd = pairs;
     }
     
     /**
@@ -201,12 +212,13 @@ export class BehaviorSystem {
     }
     
     /**
-     * 执行行为
+     * 执行一条行为（条件 → 动作 → 子事件）。
+     * @param {Map|null} objectById 可选；来自每帧构建的 id 映射，省略则在内部查找对象。
      */
-    executeBehavior(behavior) {
+    executeBehavior(behavior, objectById = null) {
         if (!behavior.enabled) return;
-        
-        const obj = this.engine.gameObjects.find(o => o.id === behavior.objectId);
+
+        const obj = this._resolveTargetObject(behavior, objectById);
         if (!obj) return;
         
         // 检查触发条件
@@ -221,11 +233,9 @@ export class BehaviorSystem {
         
         // 执行子事件（父事件条件满足时）
         if (behavior.subEvents && behavior.subEvents.length > 0) {
-            behavior.subEvents.forEach(subEventId => {
-                const subEvent = this.behaviors.find(b => b.id === subEventId);
-                if (subEvent) {
-                    this.executeBehavior(subEvent);
-                }
+            behavior.subEvents.forEach((subEventId) => {
+                const subEvent = this.behaviors.find((b) => b.id === subEventId);
+                if (subEvent) this.executeBehavior(subEvent, objectById);
             });
         }
     }
@@ -415,12 +425,6 @@ export class BehaviorSystem {
                 }
                 break;
 
-            case 'setScrollY':
-                if (gameObject.type === 'scrollView' && this.engine.updateObjectProperties) {
-                    this.engine.updateObjectProperties(gameObject, { scrollY: action.params.scrollY || 0 });
-                }
-                break;
-                
             case 'fadeIn':
                 obj.alpha = Math.min(1, obj.alpha + 0.02);
                 props.alpha = obj.alpha;
@@ -591,22 +595,39 @@ export class BehaviorSystem {
             .filter(b => b.eventType === 'start' && b.enabled)
             .forEach(b => this.executeBehavior(b));
         
-        // 设置更新循环（collisionEnter 使用上一帧结束时的碰撞快照）
-        this.updateHandler = () => {
-            if (!this.isRunning) return;
+        this.updateHandler = () => this._tickBehaviorsFrame();
 
-            this._collisionEnterBaseline = new Set(this._collisionPairEnd);
-
-            this.behaviors
-                .filter((b) => b.eventType === 'update' && b.enabled)
-                .forEach((b) => this.executeBehavior(b));
-
-            this._rebuildCollisionPairsEnd();
-        };
-        
         this.engine.app.ticker.add(this.updateHandler);
     }
-    
+
+    /**
+     * 每帧一次：collisionEnter 基线 → 跑 update 行为 → 重建「本帧结束时谁和谁挨着」
+     */
+    _tickBehaviorsFrame() {
+        if (!this.isRunning) return;
+
+        const baseline = this._collisionEnterBaseline;
+        baseline.clear();
+        for (const p of this._collisionPairEnd) baseline.add(p);
+
+        const map = this._objectById;
+        map.clear();
+        const gos = this.engine.gameObjects;
+        for (let i = 0; i < gos.length; i++) {
+            map.set(gos[i].id, gos[i]);
+        }
+
+        const list = this.behaviors;
+        for (let i = 0; i < list.length; i++) {
+            const b = list[i];
+            if (b.eventType === 'update' && b.enabled) {
+                this.executeBehavior(b, map);
+            }
+        }
+
+        this._rebuildCollisionPairsEnd();
+    }
+
     /**
      * 停止系统
      */

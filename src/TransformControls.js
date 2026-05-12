@@ -15,8 +15,6 @@ export class TransformControls {
         this.selectedObject = null;
         this.isDragging = false;
         this.dragHandle = null;
-        /** @type {'all'|'rotate'} */
-        this.gizmoMode = 'all';
 
         // 控制点
         this.handles = {
@@ -108,31 +106,10 @@ export class TransformControls {
         });
         this.container.addChild(this.rotationHandle);
 
-        this._applyGizmoModeVisibility();
-
         // 全局鼠标移动和释放
         this.engine.app.stage.on('pointermove', (e) => this.onPointerMove(e));
         this.engine.app.stage.on('pointerup', () => this.onPointerUp());
         this.engine.app.stage.on('pointerupoutside', () => this.onPointerUp());
-    }
-
-    toggleGizmoMode() {
-        this.gizmoMode = this.gizmoMode === 'all' ? 'rotate' : 'all';
-        this._applyGizmoModeVisibility();
-        this.updateTransform();
-        if (this.engine.editorUI) {
-            this.engine.editorUI.updateStatus(
-                this.gizmoMode === 'rotate' ? '变换：仅旋转（R 恢复）' : '变换：缩放 + 旋转'
-            );
-        }
-    }
-
-    _applyGizmoModeVisibility() {
-        const showScale = this.gizmoMode === 'all';
-        Object.values(this.handles).forEach((h) => {
-            if (h) h.visible = showScale;
-        });
-        this.border.visible = showScale;
     }
 
     _initRotateDrag(e) {
@@ -182,7 +159,6 @@ export class TransformControls {
         this.selectedObject = gameObject;
         if (gameObject) {
             this.show();
-            this._applyGizmoModeVisibility();
             this.updateTransform();
         } else {
             this.hide();
@@ -256,8 +232,8 @@ export class TransformControls {
      */
     getVisualBoundsForGizmo() {
         const disp = this.selectedObject.displayObject;
-        const wb = disp.getBounds();
         const parent = this.container.parent;
+        const wb = disp.getBounds();
         if (!parent) {
             return { x: wb.x, y: wb.y, width: wb.width, height: wb.height };
         }

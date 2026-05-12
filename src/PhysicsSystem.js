@@ -18,6 +18,8 @@ export class PhysicsSystem {
         this._collisionEnterPairsThisStep = new Set();
         /** @type {Set<string>} */
         this._collisionEnterPairsLastStep = new Set();
+        /** 每帧填充 id→对象，同步刚体坐标时用 Map 查找比反复 find 更直观 */
+        this._idToObj = new Map();
     }
 
     static _pairKey(idA, idB) {
@@ -84,34 +86,37 @@ export class PhysicsSystem {
 
         const isStatic = !!props.rigidStatic;
         const friction = typeof props.rigidFriction === 'number' ? props.rigidFriction : 0.1;
+        // Matter 默认 frictionStatic=0.5，远大于面板里的 friction，碰撞时会「焊死」难以侧向挣脱；与摩擦系数对齐可明显减弱粘连
+        const frictionStatic =
+            typeof props.rigidFrictionStatic === 'number'
+                ? props.rigidFrictionStatic
+                : friction;
         const restitution =
             typeof props.rigidRestitution === 'number' ? props.rigidRestitution : 0.0;
         const density = typeof props.rigidDensity === 'number' ? props.rigidDensity : 0.001;
 
         const shape = props.rigidShape || props.collisionShape || (gameObject.type === 'circle' ? 'circle' : 'rect');
 
+        const bodyOpts = {
+            isStatic,
+            friction,
+            frictionStatic,
+            restitution,
+            density
+        };
+
         let body = null;
         if (shape === 'circle') {
             const r = props.radius || Math.max(1, Math.min(props.width || 0, props.height || 0) / 2) || 20;
             const cx = (props.x || 0) + r;
             const cy = (props.y || 0) + r;
-            body = Matter.Bodies.circle(cx, cy, r, {
-                isStatic,
-                friction,
-                restitution,
-                density
-            });
+            body = Matter.Bodies.circle(cx, cy, r, bodyOpts);
         } else {
             const w = Math.max(1, props.width || 50);
             const h = Math.max(1, props.height || 50);
             const cx = (props.x || 0) + w / 2;
             const cy = (props.y || 0) + h / 2;
-            body = Matter.Bodies.rectangle(cx, cy, w, h, {
-                isStatic,
-                friction,
-                restitution,
-                density
-            });
+            body = Matter.Bodies.rectangle(cx, cy, w, h, bodyOpts);
         }
 
         if (!body) return null;
@@ -128,38 +133,52 @@ export class PhysicsSystem {
     }
 
     /**
-     * 每帧推进物理并同步到 Pixi（仅在运行态调用）
+     * 每帧：模拟一步 Matter → 把刚体坐标写回 Pixi 精灵（仅运行态调用）
      */
     update(deltaTime) {
         if (!this.matterEngine || !this.world) return;
 
-        // collisionEnter：把上一步的集合留作 baseline
+        // 上一帧收集到的碰撞对，留给「物理碰撞进入」条件作对照
         this._collisionEnterPairsLastStep = this._collisionEnterPairsThisStep;
         this._collisionEnterPairsThisStep = new Set();
 
         const ms = Math.max(0, deltaTime) * 1000;
         Matter.Engine.update(this.matterEngine, ms);
 
-        // 同步刚体到显示对象
+        this._fillGameObjectMap(this._idToObj);
+        this._syncEachBodyToSprite(this._idToObj);
+    }
+
+    _fillGameObjectMap(map) {
+        map.clear();
+        const list = this.engine.gameObjects;
+        for (let i = 0; i < list.length; i++) {
+            map.set(list[i].id, list[i]);
+        }
+    }
+
+    /** Matter.Body.position 是中心点；Pixi 矩形一般为左上角，圆形按半径偏移 */
+    _syncEachBodyToSprite(idToObj) {
         for (const [id, body] of this.bodies.entries()) {
-            const obj = this.engine.gameObjects.find((o) => o.id === id);
+            const obj = idToObj.get(id);
             if (!obj?.displayObject) continue;
             const props = obj.properties || {};
 
             const shape = props.rigidShape || props.collisionShape || (obj.type === 'circle' ? 'circle' : 'rect');
+            const disp = obj.displayObject;
             if (shape === 'circle') {
-                const r = props.radius || (body.circleRadius || 20);
-                obj.displayObject.x = body.position.x - r;
-                obj.displayObject.y = body.position.y - r;
+                const r = props.radius || body.circleRadius || 20;
+                disp.x = body.position.x - r;
+                disp.y = body.position.y - r;
             } else {
                 const w = Math.max(1, props.width || 50);
                 const h = Math.max(1, props.height || 50);
-                obj.displayObject.x = body.position.x - w / 2;
-                obj.displayObject.y = body.position.y - h / 2;
+                disp.x = body.position.x - w / 2;
+                disp.y = body.position.y - h / 2;
             }
 
-            props.x = obj.displayObject.x;
-            props.y = obj.displayObject.y;
+            props.x = disp.x;
+            props.y = disp.y;
         }
     }
 

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build -c vite.standalone.config.js && vite build",
+    "build:standalone": "vite build -c vite.standalone.config.js",
     "preview": "vite preview"
   },
   "keywords": [

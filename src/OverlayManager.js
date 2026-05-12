@@ -1,17 +1,12 @@
 /**
- * 画布覆盖层：标尺 + 参考线
- * - 标尺随 viewport 缩放/平移变化
- * - 从标尺区域拖拽生成参考线；双击参考线删除
+ * 画布覆盖层：标尺（DOM Canvas）
+ * 对齐辅助改用场景内固定网格（GridSystem），不再使用拖拽参考线。
  */
 
 export class OverlayManager {
     constructor(engine) {
         this.engine = engine;
         this.enabledRuler = true;
-        this.enabledGuides = true;
-
-        this.guides = []; // { axis:'x'|'y', world:number }
-        this._draggingGuide = null; // { axis, startWorld }
 
         this._initDom();
         this.update();
@@ -21,26 +16,9 @@ export class OverlayManager {
         this.overlay = document.getElementById('overlay-ui');
         this.canvasTop = document.getElementById('ruler-top');
         this.canvasLeft = document.getElementById('ruler-left');
-        this.guidesLayer = document.getElementById('guides-layer');
 
-        // 允许在标尺区域接收事件（否则 pointer-events:none）
         if (this.canvasTop) this.canvasTop.style.pointerEvents = 'auto';
         if (this.canvasLeft) this.canvasLeft.style.pointerEvents = 'auto';
-        if (this.guidesLayer) this.guidesLayer.style.pointerEvents = 'auto';
-
-        this.canvasTop?.addEventListener('pointerdown', (e) => this._onRulerDown(e, 'y'));
-        this.canvasLeft?.addEventListener('pointerdown', (e) => this._onRulerDown(e, 'x'));
-        window.addEventListener('pointermove', (e) => this._onPointerMove(e));
-        window.addEventListener('pointerup', () => this._onPointerUp());
-        window.addEventListener('keydown', (e) => {
-            if (e.key === 'Delete' && this._hoverGuideEl) {
-                const idx = parseInt(this._hoverGuideEl.getAttribute('data-guide-idx') || '-1', 10);
-                if (idx >= 0) {
-                    this.guides.splice(idx, 1);
-                    this._renderGuides();
-                }
-            }
-        });
     }
 
     setRulerEnabled(v) {
@@ -49,147 +27,15 @@ export class OverlayManager {
         this.update();
     }
 
-    setGuidesEnabled(v) {
-        this.enabledGuides = !!v;
-        this._syncVisibility();
-        this._renderGuides();
-    }
-
     _syncVisibility() {
-        if (!this.overlay) return;
         if (this.canvasTop) this.canvasTop.style.display = this.enabledRuler ? 'block' : 'none';
         if (this.canvasLeft) this.canvasLeft.style.display = this.enabledRuler ? 'block' : 'none';
         const corner = document.getElementById('ruler-corner');
         if (corner) corner.style.display = this.enabledRuler ? 'block' : 'none';
-        if (this.guidesLayer) this.guidesLayer.style.display = this.enabledGuides ? 'block' : 'none';
     }
 
     _getViewport() {
         return this.engine.viewportController;
-    }
-
-    _onRulerDown(e, axis) {
-        if (!this.enabledGuides) return;
-        if (this.engine.isRunning) return;
-        e.preventDefault();
-        const vp = this._getViewport();
-        if (!vp) return;
-
-        const world = vp.screenToWorld(e.clientX, e.clientY);
-        const worldVal = axis === 'x' ? world.x : world.y;
-        this._draggingGuide = { axis, world: worldVal };
-
-        // 临时参考线
-        this._tempEl?.remove();
-        this._tempEl = this._createGuideEl(axis, worldVal, true);
-        this.guidesLayer.appendChild(this._tempEl);
-        this._positionGuideEl(this._tempEl, axis, worldVal);
-    }
-
-    _onPointerMove(e) {
-        if (!this._draggingGuide) return;
-        const vp = this._getViewport();
-        if (!vp) return;
-        const world = vp.screenToWorld(e.clientX, e.clientY);
-        const worldVal = this._draggingGuide.axis === 'x' ? world.x : world.y;
-        this._draggingGuide.world = worldVal;
-        if (this._tempEl) this._positionGuideEl(this._tempEl, this._draggingGuide.axis, worldVal);
-    }
-
-    _onPointerUp() {
-        if (!this._draggingGuide) return;
-        const { axis, world } = this._draggingGuide;
-        this._draggingGuide = null;
-        this._tempEl?.remove();
-        this._tempEl = null;
-
-        // 过滤太靠边的误拖
-        if (Number.isFinite(world)) {
-            this.guides.push({ axis, world });
-            this._renderGuides();
-        }
-    }
-
-    _createGuideEl(axis, worldVal, isTemp = false) {
-        const el = document.createElement('div');
-        el.className = 'guide-line';
-        el.style.position = 'absolute';
-        el.style.background = isTemp ? 'rgba(255,255,255,0.55)' : 'rgba(186, 85, 211, 0.9)';
-        el.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.25)';
-        el.style.pointerEvents = 'auto';
-        el.style.cursor = axis === 'x' ? 'ew-resize' : 'ns-resize';
-        el.style.zIndex = 5000;
-
-        if (axis === 'x') {
-            el.style.top = '0px';
-            el.style.bottom = '0px';
-            el.style.width = '1px';
-        } else {
-            el.style.left = '0px';
-            el.style.right = '0px';
-            el.style.height = '1px';
-        }
-
-        if (!isTemp) {
-            el.title = '双击删除参考线';
-            el.addEventListener('dblclick', () => {
-                const idx = parseInt(el.getAttribute('data-guide-idx') || '-1', 10);
-                if (idx >= 0) {
-                    this.guides.splice(idx, 1);
-                    this._renderGuides();
-                }
-            });
-            el.addEventListener('mouseenter', () => { this._hoverGuideEl = el; });
-            el.addEventListener('mouseleave', () => { this._hoverGuideEl = null; });
-        }
-
-        return el;
-    }
-
-    _positionGuideEl(el, axis, worldVal) {
-        const vp = this._getViewport();
-        if (!vp) return;
-        const p = vp.worldToScreen(axis === 'x' ? worldVal : 0, axis === 'y' ? worldVal : 0);
-        if (axis === 'x') {
-            el.style.left = `${Math.round(p.x)}px`;
-        } else {
-            el.style.top = `${Math.round(p.y)}px`;
-        }
-    }
-
-    _renderGuides() {
-        if (!this.guidesLayer) return;
-        this.guidesLayer.innerHTML = '';
-        if (!this.enabledGuides) return;
-
-        this.guides.forEach((g, idx) => {
-            const el = this._createGuideEl(g.axis, g.world, false);
-            el.setAttribute('data-guide-idx', String(idx));
-            this.guidesLayer.appendChild(el);
-            this._positionGuideEl(el, g.axis, g.world);
-        });
-    }
-
-    /**
-     * 给拖拽用的吸附：返回 {snapX, snapY}（世界坐标）
-     */
-    snapToGuides(worldX, worldY, thresholdWorld = 5) {
-        if (!this.enabledGuides) return null;
-        const vp = this._getViewport();
-        const scale = vp ? vp.scale : 1;
-        const threshold = thresholdWorld / Math.max(0.0001, scale); // 屏幕 5px → 世界距离
-
-        let snapX = null;
-        let snapY = null;
-        for (const g of this.guides) {
-            if (g.axis === 'x') {
-                if (Math.abs(worldX - g.world) <= threshold) snapX = g.world;
-            } else {
-                if (Math.abs(worldY - g.world) <= threshold) snapY = g.world;
-            }
-        }
-        if (snapX === null && snapY === null) return null;
-        return { snapX, snapY };
     }
 
     /**
@@ -197,7 +43,6 @@ export class OverlayManager {
      */
     update() {
         this._syncVisibility();
-        if (this.enabledGuides) this._renderGuides();
         if (!this.enabledRuler) return;
         this._drawRulers();
     }
@@ -209,7 +54,6 @@ export class OverlayManager {
         const rect = document.getElementById('game-canvas')?.getBoundingClientRect();
         if (!rect) return;
 
-        // 同步 canvas 像素尺寸（避免模糊）
         const dpr = window.devicePixelRatio || 1;
         const topW = Math.max(1, rect.width - 20);
         const topH = 20;
@@ -245,9 +89,9 @@ export class OverlayManager {
         paintBg(ctxLeft, leftW, leftH);
 
         const scale = vp.scale;
-        // 每 50px 一个主刻度，最小 10px
         const majorPx = 50;
         const minorPx = 10;
+        const majorsPerCycle = majorPx / minorPx;
 
         const drawTicksX = () => {
             ctxTop.fillStyle = '#aaa';
@@ -255,21 +99,33 @@ export class OverlayManager {
             ctxTop.font = '10px Arial';
             const startWorld = vp.screenToWorld(20, 0).x;
             const endWorld = vp.screenToWorld(rect.width, 0).x;
-            const startScreen = vp.worldToScreen(startWorld, 0).x;
-            // 让刻度从一个整齐的 minor 开始
             const minorWorldStep = minorPx / scale;
-            const first = Math.floor(startWorld / minorWorldStep) * minorWorldStep;
-            for (let w = first; w <= endWorld; w += minorWorldStep) {
-                const sx = vp.worldToScreen(w, 0).x - 20; // top ruler 左侧从 20 开始
-                const isMajor = Math.abs(((w / (majorPx / scale)) % 1)) < 1e-6;
+            if (minorWorldStep <= 0) return;
+
+            const nMin = Math.ceil(Math.min(startWorld, endWorld) / minorWorldStep - 1e-9);
+            const nMax = Math.floor(Math.max(startWorld, endWorld) / minorWorldStep + 1e-9);
+            let lastLabelRight = -Infinity;
+
+            for (let n = nMin; n <= nMax; n++) {
+                const w = n * minorWorldStep;
+                const sx = vp.worldToScreen(w, 0).x - 20;
+                if (sx < -8 || sx > topW + 8) continue;
+
+                const isMajor = n % majorsPerCycle === 0;
                 const len = isMajor ? 10 : 5;
                 ctxTop.beginPath();
                 ctxTop.moveTo(sx + 0.5, topH);
                 ctxTop.lineTo(sx + 0.5, topH - len);
                 ctxTop.stroke();
+
                 if (isMajor) {
-                    const label = Math.round(w);
-                    ctxTop.fillText(String(label), sx + 2, 10);
+                    const label = String(Math.round(w));
+                    const tw = ctxTop.measureText(label).width;
+                    const lx = sx + 2;
+                    if (lx + tw < lastLabelRight + 3) continue;
+                    if (lx + tw > topW + 2) continue;
+                    ctxTop.fillText(label, lx, 10);
+                    lastLabelRight = lx + tw;
                 }
             }
         };
@@ -281,22 +137,33 @@ export class OverlayManager {
             const startWorld = vp.screenToWorld(0, 20).y;
             const endWorld = vp.screenToWorld(0, rect.height).y;
             const minorWorldStep = minorPx / scale;
-            const first = Math.floor(startWorld / minorWorldStep) * minorWorldStep;
-            for (let w = first; w <= endWorld; w += minorWorldStep) {
+            if (minorWorldStep <= 0) return;
+
+            const nMin = Math.ceil(Math.min(startWorld, endWorld) / minorWorldStep - 1e-9);
+            const nMax = Math.floor(Math.max(startWorld, endWorld) / minorWorldStep + 1e-9);
+            let lastMajorSy = -Infinity;
+
+            for (let n = nMin; n <= nMax; n++) {
+                const w = n * minorWorldStep;
                 const sy = vp.worldToScreen(0, w).y - 20;
-                const isMajor = Math.abs(((w / (majorPx / scale)) % 1)) < 1e-6;
+                if (sy < -8 || sy > leftH + 8) continue;
+
+                const isMajor = n % majorsPerCycle === 0;
                 const len = isMajor ? 10 : 5;
                 ctxLeft.beginPath();
                 ctxLeft.moveTo(leftW, sy + 0.5);
                 ctxLeft.lineTo(leftW - len, sy + 0.5);
                 ctxLeft.stroke();
+
                 if (isMajor) {
-                    const label = Math.round(w);
+                    if (Math.abs(sy - lastMajorSy) < 12) continue;
+                    const label = String(Math.round(w));
                     ctxLeft.save();
                     ctxLeft.translate(2, sy + 10);
                     ctxLeft.rotate(-Math.PI / 2);
-                    ctxLeft.fillText(String(label), 0, 0);
+                    ctxLeft.fillText(label, 0, 0);
                     ctxLeft.restore();
+                    lastMajorSy = sy;
                 }
             }
         };
@@ -305,4 +172,3 @@ export class OverlayManager {
         drawTicksY();
     }
 }
-

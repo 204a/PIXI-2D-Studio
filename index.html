@@ -268,9 +268,6 @@
                 <div class="component-item" data-type="nineSlice">
                     ▦ 九宫格
                 </div>
-                <div class="component-item" data-type="scrollView">
-                    🧾 滚动视图
-                </div>
             </div>
             
             <h2 style="margin-top: 30px;">🎯 场景对象</h2>
@@ -351,27 +348,30 @@
                 <button id="btn-stop" class="secondary">⏹ 停止</button>
                 <button id="btn-clear" class="secondary">🗑️ 清空</button>
                 <button id="btn-export" class="secondary">💾 导出</button>
+                <button id="btn-export-html" class="secondary" type="button">📄 导出 HTML</button>
                 <input type="file" id="scene-import-input" accept=".json,application/json" style="display: none;">
                 <button id="btn-import" class="secondary" type="button">📂 导入</button>
                 <button id="btn-playable" class="secondary" type="button">🎮 游玩</button>
-                <button id="btn-publish" class="secondary" type="button">📦 发布</button>
-                <button id="btn-publish-onefile" class="secondary" type="button">🚀 一键发布</button>
-                <div id="tool-mode" style="display:flex; gap:6px; margin-left:10px; border-left:1px solid #444; padding-left:10px;">
-                    <button id="tool-select" class="secondary" type="button">🖱 选择</button>
-                    <button id="tool-move" class="secondary" type="button">✋ 移动</button>
-                    <button id="tool-rotate" class="secondary" type="button">⟲ 旋转</button>
-                    <button id="tool-scale" class="secondary" type="button">⬚ 缩放</button>
+                <div id="tool-mode" style="display:flex; align-items:center; gap:6px; margin-left:10px; border-left:1px solid #444; padding-left:10px;">
                     <button id="tool-ruler" class="secondary" type="button">📏 标尺</button>
-                    <button id="tool-guides" class="secondary" type="button">📐 参考线</button>
+                    <button id="tool-grid" class="secondary" type="button">▦ 网格</button>
+                    <label for="grid-cell-size" style="color:#aaa;font-size:12px;margin-left:6px;">间距</label>
+                    <input id="grid-cell-size" type="number" min="4" max="512" value="20" title="网格单元边长（世界像素）"
+                        style="width:54px;padding:4px 6px;background:#333;border:1px solid #444;color:#fff;border-radius:4px;font-size:12px;">
                 </div>
             </div>
             <div id="game-canvas"></div>
-            <div id="overlay-ui" style="position:absolute; inset:0; pointer-events:none;">
-                <canvas id="ruler-top" style="position:absolute; left:20px; top:0; height:20px; width:calc(100% - 20px);"></canvas>
-                <canvas id="ruler-left" style="position:absolute; left:0; top:20px; width:20px; height:calc(100% - 20px);"></canvas>
-                <div id="ruler-corner" style="position:absolute; left:0; top:0; width:20px; height:20px; background:rgba(37,37,37,0.9); border-right:1px solid #333; border-bottom:1px solid #333;"></div>
-                <div id="guides-layer" style="position:absolute; inset:0;"></div>
+
+            <!-- 覆盖层：保留占位容器（避免拦截拖拽/点击） -->
+            <div id="overlay-ui" style="position:absolute; inset:0; pointer-events:none;"></div>
+
+            <!-- 标尺：只占 20px 条带区域 -->
+            <div id="overlay-rulers" style="position:absolute; inset:0; pointer-events:none;">
+                <canvas id="ruler-top" style="position:absolute; left:20px; top:0; height:20px; width:calc(100% - 20px); pointer-events:auto;"></canvas>
+                <canvas id="ruler-left" style="position:absolute; left:0; top:20px; width:20px; height:calc(100% - 20px); pointer-events:auto;"></canvas>
+                <div id="ruler-corner" style="position:absolute; left:0; top:0; width:20px; height:20px; background:rgba(37,37,37,0.9); border-right:1px solid #333; border-bottom:1px solid #333; pointer-events:auto;"></div>
             </div>
+
             <div class="status-bar">
                 <span id="status-text">就绪</span>
                 <span id="fps-counter">FPS: 0</span>

@@ -563,7 +563,6 @@ export class EventEditorUI {
                         <optgroup label="界面">
                             <option value="setText">设置文本</option>
                             <option value="setProgress">设置进度条 (0–1)</option>
-                            <option value="setScrollY">设置滚动视图 scrollY</option>
                         </optgroup>
                     </select>
                 </div>
@@ -638,16 +637,6 @@ export class EventEditorUI {
                 return;
             }
 
-            if (type === 'setScrollY') {
-                paramsDiv.innerHTML = `
-                    <div style="margin-bottom: 10px;">
-                        <label style="color: #aaa; font-size: 13px;">scrollY（像素）</label>
-                        <input type="number" id="action-scrollY-val" value="0" step="10" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
-                    </div>
-                `;
-                return;
-            }
-
             const configs = {
                 'move': [['deltaX', 'X移动', 5], ['deltaY', 'Y移动', 0]],
                 'setPosition': [['x', 'X坐标', 100], ['y', 'Y坐标', 100]],
@@ -703,10 +692,6 @@ export class EventEditorUI {
                     const el = overlay.querySelector('#action-progress-val');
                     params.value = el ? parseFloat(el.value) : 0;
                     if (Number.isNaN(params.value)) params.value = 0;
-                } else if (type === 'setScrollY') {
-                    const el = overlay.querySelector('#action-scrollY-val');
-                    params.scrollY = el ? parseFloat(el.value) : 0;
-                    if (Number.isNaN(params.scrollY)) params.scrollY = 0;
                 } else {
                     overlay.querySelectorAll('#action-params input').forEach(input => {
                         params[input.name] = parseFloat(input.value) || 0;
@@ -807,8 +792,7 @@ export class EventEditorUI {
             'playMusic': `🎵 音乐: ${a.params.name || '?'} (音量${a.params.volume ?? 0.7})`,
             'stopMusic': `⏹ 停音乐 (淡出 ${a.params.fadeOut ?? 0}s)`,
             'setText': `📝 文本: ${a.params.text ?? ''}`,
-            'setProgress': `📊 进度: ${a.params.value ?? 0}`,
-            'setScrollY': `🧾 scrollY: ${a.params.scrollY ?? 0}`
+            'setProgress': `📊 进度: ${a.params.value ?? 0}`
         };
         return formats[a.type] || a.type;
     }
