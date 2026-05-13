@@ -279,6 +279,20 @@ export class EditorUI {
             case 'particle':
                 properties.emissionRate = 10;
                 properties.maxParticles = 100;
+                properties.lifespan = 1200;
+                properties.startColor = 0xffff00;
+                properties.endColor = 0xff3300;
+                properties.startAlpha = 1;
+                properties.endAlpha = 0;
+                properties.startScale = 1;
+                properties.endScale = 0.2;
+                properties.speed = 3;
+                properties.speedVariation = 0.5;
+                properties.angle = -90;
+                properties.angleSpread = 60;
+                properties.gravity = 0.04;
+                properties.particleSize = 3;
+                properties.isActive = true;
                 break;
             case 'button':
                 properties.width = 140;
@@ -937,6 +951,74 @@ export class EditorUI {
             `;
         }
 
+        if (gameObject.type === 'particle') {
+            const startColor = Number(props.startColor ?? 0xffff00).toString(16).padStart(6, '0');
+            const endColor = Number(props.endColor ?? 0xff3300).toString(16).padStart(6, '0');
+            html += `
+                <div class="property-group">
+                    <label>标签（用于事件匹配）</label>
+                    <input type="text" id="prop-tag" value="${this._escapeAttr(props.tag || '')}" ${dis} placeholder="如：pickup_fx" style="width:100%;padding:8px;background:#333;border:1px solid #444;color:#fff;border-radius:4px;">
+                </div>
+                <div class="property-group" style="margin-top:10px;padding-top:10px;border-top:1px dashed #444;">
+                    <label><input type="checkbox" id="prop-particle-active" ${props.isActive !== false ? 'checked' : ''} ${dis} style="width:auto;"> 启用发射</label>
+                    <small style="color:#666;font-size:11px;display:block;margin-top:4px;">运行态和预览态生效，用于火焰、烟雾、喷射等简单特效。</small>
+                </div>
+                <div class="property-group">
+                    <label>发射率 / 最大粒子数</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                        <input type="number" id="prop-particle-rate" value="${props.emissionRate ?? 10}" min="0" step="1" ${dis}>
+                        <input type="number" id="prop-particle-max" value="${props.maxParticles ?? 100}" min="1" step="1" ${dis}>
+                    </div>
+                </div>
+                <div class="property-group">
+                    <label>生命周期(秒) / 粒子半径</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                        <input type="number" id="prop-particle-life" value="${((props.lifespan ?? 1200) / 1000).toFixed(2)}" min="0.02" step="0.1" ${dis}>
+                        <input type="number" id="prop-particle-size" value="${props.particleSize ?? 3}" min="1" step="1" ${dis}>
+                    </div>
+                </div>
+                <div class="property-group">
+                    <label>起始颜色 / 结束颜色</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                        <input type="text" id="prop-particle-start-color" value="0x${startColor}" ${dis}>
+                        <input type="text" id="prop-particle-end-color" value="0x${endColor}" ${dis}>
+                    </div>
+                </div>
+                <div class="property-group">
+                    <label>起始透明度 / 结束透明度</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                        <input type="number" id="prop-particle-start-alpha" value="${props.startAlpha ?? 1}" min="0" max="1" step="0.1" ${dis}>
+                        <input type="number" id="prop-particle-end-alpha" value="${props.endAlpha ?? 0}" min="0" max="1" step="0.1" ${dis}>
+                    </div>
+                </div>
+                <div class="property-group">
+                    <label>起始缩放 / 结束缩放</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                        <input type="number" id="prop-particle-start-scale" value="${props.startScale ?? 1}" min="0" step="0.1" ${dis}>
+                        <input type="number" id="prop-particle-end-scale" value="${props.endScale ?? 0.2}" min="0" step="0.1" ${dis}>
+                    </div>
+                </div>
+                <div class="property-group">
+                    <label>速度 / 速度随机</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                        <input type="number" id="prop-particle-speed" value="${props.speed ?? 3}" step="0.1" ${dis}>
+                        <input type="number" id="prop-particle-speed-var" value="${props.speedVariation ?? 0.5}" min="0" step="0.1" ${dis}>
+                    </div>
+                </div>
+                <div class="property-group">
+                    <label>方向角 / 扩散角</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                        <input type="number" id="prop-particle-angle" value="${props.angle ?? -90}" step="1" ${dis}>
+                        <input type="number" id="prop-particle-spread" value="${props.angleSpread ?? 60}" min="0" step="1" ${dis}>
+                    </div>
+                </div>
+                <div class="property-group">
+                    <label>重力</label>
+                    <input type="number" id="prop-particle-gravity" value="${props.gravity ?? 0.04}" step="0.01" ${dis}>
+                </div>
+            `;
+        }
+
         if (gameObject.type === 'button') {
             const fonts = this.engine.resourceManager.listFonts();
             const fontOpts =
@@ -1228,6 +1310,53 @@ export class EditorUI {
                 });
             }
         });
+
+        const parseEditorColor = (value) => {
+            const n = Number(String(value || '').trim().replace(/^#/, '0x'));
+            return Number.isFinite(n) ? n : 0;
+        };
+        const particleInputs = {
+            'prop-particle-rate': 'emissionRate',
+            'prop-particle-max': 'maxParticles',
+            'prop-particle-size': 'particleSize',
+            'prop-particle-start-color': 'startColor',
+            'prop-particle-end-color': 'endColor',
+            'prop-particle-start-alpha': 'startAlpha',
+            'prop-particle-end-alpha': 'endAlpha',
+            'prop-particle-start-scale': 'startScale',
+            'prop-particle-end-scale': 'endScale',
+            'prop-particle-speed': 'speed',
+            'prop-particle-speed-var': 'speedVariation',
+            'prop-particle-angle': 'angle',
+            'prop-particle-spread': 'angleSpread',
+            'prop-particle-gravity': 'gravity'
+        };
+        Object.keys(particleInputs).forEach((inputId) => {
+            const input = document.getElementById(inputId);
+            if (!input) return;
+            input.addEventListener('input', () => {
+                const propName = particleInputs[inputId];
+                const value = propName === 'startColor' || propName === 'endColor'
+                    ? parseEditorColor(input.value)
+                    : parseFloat(input.value) || 0;
+                this.engine.updateObjectProperties(gameObject, { [propName]: value });
+            });
+        });
+        const particleLife = document.getElementById('prop-particle-life');
+        if (particleLife) {
+            particleLife.addEventListener('input', () => {
+                const seconds = parseFloat(particleLife.value);
+                this.engine.updateObjectProperties(gameObject, {
+                    lifespan: Math.max(0.02, Number.isFinite(seconds) ? seconds : 1.2) * 1000
+                });
+            });
+        }
+        const particleActive = document.getElementById('prop-particle-active');
+        if (particleActive) {
+            particleActive.addEventListener('change', () => {
+                this.engine.updateObjectProperties(gameObject, { isActive: particleActive.checked });
+            });
+        }
 
         const collShape = document.getElementById('prop-collision-shape');
         if (collShape) {

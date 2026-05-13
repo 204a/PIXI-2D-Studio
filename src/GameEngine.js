@@ -314,7 +314,7 @@ export class GameEngine {
                 gameObject.displayObject = this.createContainerObject(gameObject.properties);
                 break;
             case 'particle':
-                gameObject.displayObject = this.createParticleObject(gameObject.properties);
+                gameObject.displayObject = this.createParticleObject(gameObject);
                 break;
             case 'button':
                 gameObject.displayObject = this.createButtonObject(gameObject);
@@ -587,17 +587,62 @@ export class GameEngine {
     /**
      * 创建粒子发射器对象
      */
-    createParticleObject(props) {
+    createParticleObject(gameObjectOrProps) {
+        const gameObject = gameObjectOrProps.properties ? gameObjectOrProps : null;
+        const props = gameObject ? gameObject.properties : gameObjectOrProps;
         const emitter = this.particleSystem.createEmitter({
             x: props.x,
             y: props.y,
             emissionRate: props.emissionRate || 10,
             maxParticles: props.maxParticles || 100,
-            startColor: props.startColor || 0xFFFF00,
-            endColor: props.endColor || 0xFF0000
+            lifespan: props.lifespan || 1200,
+            startColor: props.startColor ?? 0xFFFF00,
+            endColor: props.endColor ?? 0xFF0000,
+            startAlpha: props.startAlpha ?? 1,
+            endAlpha: props.endAlpha ?? 0,
+            startScale: props.startScale ?? 1,
+            endScale: props.endScale ?? 0.2,
+            speed: props.speed ?? 3,
+            speedVariation: props.speedVariation ?? 0.5,
+            angle: props.angle ?? -90,
+            angleSpread: props.angleSpread ?? 60,
+            gravity: props.gravity ?? 0.04,
+            particleSize: props.particleSize ?? 3,
+            isActive: props.isActive !== false,
+            alpha: props.alpha,
+            rotation: props.rotation || 0
         });
+        if (gameObject) {
+            gameObject._particleEmitter = emitter;
+            gameObject._particlePlaceholder = this.createParticlePlaceholder();
+            emitter.container.addChild(gameObject._particlePlaceholder);
+            emitter.container.hitArea = new PIXI.Rectangle(-18, -18, 36, 36);
+        }
         
         return emitter.container;
+    }
+
+    createParticlePlaceholder() {
+        const g = new PIXI.Graphics();
+        g.lineStyle(2, 0xffd24a, 0.9);
+        g.drawCircle(0, 0, 14);
+        g.moveTo(-20, 0);
+        g.lineTo(20, 0);
+        g.moveTo(0, -20);
+        g.lineTo(0, 20);
+        g.beginFill(0xffd24a, 0.28);
+        g.drawCircle(0, 0, 4);
+        g.endFill();
+        g.zIndex = 100000;
+        return g;
+    }
+
+    setParticlePlaceholdersVisible(visible) {
+        this.gameObjects.forEach((obj) => {
+            if (obj._particlePlaceholder) {
+                obj._particlePlaceholder.visible = visible;
+            }
+        });
     }
 
     createButtonObject(gameObject) {
@@ -1016,21 +1061,33 @@ export class GameEngine {
         if (properties.x !== undefined) {
             obj.x = properties.x;
             gameObject.properties.x = properties.x;
+            if (gameObject._particleEmitter) {
+                this.particleSystem.updateEmitter(gameObject._particleEmitter, { x: properties.x });
+            }
         }
         
         if (properties.y !== undefined) {
             obj.y = properties.y;
             gameObject.properties.y = properties.y;
+            if (gameObject._particleEmitter) {
+                this.particleSystem.updateEmitter(gameObject._particleEmitter, { y: properties.y });
+            }
         }
         
         if (properties.alpha !== undefined) {
             obj.alpha = properties.alpha;
             gameObject.properties.alpha = properties.alpha;
+            if (gameObject._particleEmitter) {
+                this.particleSystem.updateEmitter(gameObject._particleEmitter, { alpha: properties.alpha });
+            }
         }
         
         if (properties.rotation !== undefined) {
             obj.rotation = properties.rotation * Math.PI / 180;
             gameObject.properties.rotation = properties.rotation;
+            if (gameObject._particleEmitter) {
+                this.particleSystem.updateEmitter(gameObject._particleEmitter, { rotation: properties.rotation });
+            }
         }
 
         if (properties.z !== undefined) {
@@ -1153,6 +1210,35 @@ export class GameEngine {
             if (properties.sliceBottom !== undefined) plane.bottomHeight = properties.sliceBottom;
         }
 
+        if (gameObject.type === 'particle' && gameObject._particleEmitter) {
+            const particleKeys = [
+                'emissionRate',
+                'maxParticles',
+                'lifespan',
+                'startColor',
+                'endColor',
+                'startAlpha',
+                'endAlpha',
+                'startScale',
+                'endScale',
+                'speed',
+                'speedVariation',
+                'angle',
+                'angleSpread',
+                'gravity',
+                'particleSize',
+                'isActive'
+            ];
+            const updates = {};
+            particleKeys.forEach((key) => {
+                if (properties[key] !== undefined) {
+                    gameObject.properties[key] = properties[key];
+                    updates[key] = properties[key];
+                }
+            });
+            this.particleSystem.updateEmitter(gameObject._particleEmitter, updates);
+        }
+
         // 更新变换控制框
         if (this.selectedObject === gameObject) {
             this.transformControls.updateTransform();
@@ -1196,6 +1282,9 @@ export class GameEngine {
     removeGameObject(gameObject, saveHistory = true) {
         const index = this.gameObjects.indexOf(gameObject);
         if (index > -1) {
+            if (gameObject._particleEmitter) {
+                this.particleSystem.removeEmitter(gameObject._particleEmitter.id);
+            }
             const parent = gameObject.displayObject.parent;
             if (parent) {
                 parent.removeChild(gameObject.displayObject);
@@ -1229,6 +1318,9 @@ export class GameEngine {
                 parent.removeChild(obj.displayObject);
             }
         });
+        if (this.particleSystem) {
+            this.particleSystem.clear();
+        }
         
         this.gameObjects = [];
         this.selectedObject = null;
@@ -1270,6 +1362,7 @@ export class GameEngine {
                 obj.displayObject.eventMode = 'none';
             }
         });
+        this.setParticlePlaceholdersVisible(false);
         
         // 重新初始化平台角色行为（基于当前属性）
         this.platformerBehaviors = [];

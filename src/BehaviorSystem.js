@@ -440,6 +440,106 @@ export class BehaviorSystem {
             default: return true;
         }
     }
+
+    _toNumber(value, fallback = 0) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    _toColor(value, fallback) {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string') {
+            const n = Number(value.trim().replace(/^#/, '0x'));
+            if (Number.isFinite(n)) return n;
+        }
+        return fallback;
+    }
+
+    _buildSpawnProperties(sourceObject, params = {}) {
+        const mode = params.positionMode || 'relative';
+        const baseX = mode === 'absolute' ? 0 : this._toNumber(sourceObject.properties?.x, sourceObject.displayObject?.x || 0);
+        const baseY = mode === 'absolute' ? 0 : this._toNumber(sourceObject.properties?.y, sourceObject.displayObject?.y || 0);
+        const x = mode === 'absolute'
+            ? this._toNumber(params.x, baseX)
+            : baseX + this._toNumber(params.offsetX, 0);
+        const y = mode === 'absolute'
+            ? this._toNumber(params.y, baseY)
+            : baseY + this._toNumber(params.offsetY, 0);
+        const type = params.objectType || 'rectangle';
+        const props = {
+            x,
+            y,
+            name: params.name || '生成对象',
+            tag: params.tag || '',
+            layerId: params.layerId || sourceObject.properties?.layerId || 'layer_default'
+        };
+
+        if (type === 'text') {
+            props.text = params.text || '生成文本';
+            props.fontSize = this._toNumber(params.fontSize, 24);
+            props.color = this._toColor(params.color, 0xffffff);
+        } else if (type === 'circle') {
+            props.radius = Math.max(1, this._toNumber(params.radius, 20));
+            props.color = this._toColor(params.color, 0x2ecc71);
+        } else if (type === 'particle') {
+            props.emissionRate = Math.max(0, this._toNumber(params.emissionRate, 20));
+            props.maxParticles = Math.max(1, this._toNumber(params.maxParticles, 80));
+            props.lifespan = Math.max(16, this._toNumber(params.lifespan, 800));
+            props.startColor = this._toColor(params.color, 0xffff00);
+            props.endColor = this._toColor(params.endColor, 0xff3300);
+            props.angle = this._toNumber(params.angle, -90);
+            props.angleSpread = this._toNumber(params.angleSpread, 80);
+            props.speed = this._toNumber(params.speed, 3);
+            props.gravity = this._toNumber(params.gravity, 0.04);
+            props.particleSize = Math.max(1, this._toNumber(params.particleSize, 3));
+            props.isActive = true;
+        } else {
+            props.width = Math.max(1, this._toNumber(params.width, 40));
+            props.height = Math.max(1, this._toNumber(params.height, 40));
+            props.color = this._toColor(params.color, type === 'sprite' ? 0x3498db : 0xe74c3c);
+        }
+
+        return props;
+    }
+
+    _spawnObject(sourceObject, action) {
+        const params = action.params || {};
+        const now = performance.now ? performance.now() : Date.now();
+        const cooldownMs = Math.max(0, this._toNumber(params.cooldownMs, 300));
+        if (cooldownMs > 0 && action._lastSpawnAt && now - action._lastSpawnAt < cooldownMs) {
+            return;
+        }
+
+        const type = params.objectType || 'rectangle';
+        const props = this._buildSpawnProperties(sourceObject, params);
+        const spawned = this.engine.createGameObject?.(type, props, false);
+        if (!spawned) return;
+
+        action._lastSpawnAt = now;
+        spawned.properties.spawnedBy = sourceObject.id;
+
+        if (this.engine.isRunning && spawned.displayObject) {
+            spawned.displayObject.eventMode = (spawned.type === 'button' || spawned.type === 'inputField') ? 'static' : 'none';
+            if (spawned._particlePlaceholder) spawned._particlePlaceholder.visible = false;
+        }
+
+        if (this.engine.layerManager) {
+            this.engine.layerManager.applyToAllObjects();
+        }
+        if (this.engine.physicsSystem?.matterEngine && this.engine.physicsSystem.isEnabledFor?.(spawned)) {
+            this.engine.physicsSystem.start();
+        }
+    }
+
+    _deleteObjectsByTag(params = {}) {
+        const tag = String(params.tag || '').trim();
+        if (!tag || !this.engine.removeGameObject) return;
+
+        const targets = this.engine.gameObjects.filter((obj) => obj.properties?.tag === tag);
+        targets.forEach((obj) => {
+            this.engine.removeGameObject(obj, false);
+        });
+    }
     
     /**
      * 执行单个动作
@@ -537,6 +637,14 @@ export class BehaviorSystem {
                 if (this.engine.removeGameObject) {
                     this.engine.removeGameObject(gameObject, false);
                 }
+                break;
+
+            case 'deleteObjectsByTag':
+                this._deleteObjectsByTag(action.params);
+                break;
+
+            case 'spawnObject':
+                this._spawnObject(gameObject, action);
                 break;
 
             case 'switchScene': {

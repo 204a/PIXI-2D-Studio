@@ -9,6 +9,21 @@ export class ParticleSystem {
         this.engine = engine;
         this.emitters = []; // 所有发射器
     }
+
+    _num(value, fallback) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    _color(value, fallback) {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string') {
+            const cleaned = value.trim().replace(/^#/, '0x');
+            const n = Number(cleaned);
+            if (Number.isFinite(n)) return n;
+        }
+        return fallback;
+    }
     
     /**
      * 创建粒子发射器
@@ -18,43 +33,97 @@ export class ParticleSystem {
             id: `emitter_${Date.now()}_${Math.random()}`,
             container: new PIXI.Container(),
             particles: [],
-            isActive: true,
+            isActive: options.isActive !== false,
             
             // 发射器配置
             config: {
-                x: options.x || 0,
-                y: options.y || 0,
-                emissionRate: options.emissionRate || 10, // 每秒发射数量
-                maxParticles: options.maxParticles || 100,
-                lifespan: options.lifespan || 2000, // 粒子生命周期（毫秒）
+                x: this._num(options.x, 0),
+                y: this._num(options.y, 0),
+                emissionRate: Math.max(0, this._num(options.emissionRate, 10)), // 每秒发射数量
+                maxParticles: Math.max(1, Math.floor(this._num(options.maxParticles, 100))),
+                lifespan: Math.max(16, this._num(options.lifespan, 2000)), // 粒子生命周期（毫秒）
                 
                 // 粒子初始属性
-                startColor: options.startColor || 0xFFFFFF,
-                endColor: options.endColor || 0x000000,
-                startAlpha: options.startAlpha || 1,
-                endAlpha: options.endAlpha || 0,
-                startScale: options.startScale || 1,
-                endScale: options.endScale || 0.5,
+                startColor: this._color(options.startColor, 0xFFFFFF),
+                endColor: this._color(options.endColor, 0x000000),
+                startAlpha: this._num(options.startAlpha, 1),
+                endAlpha: this._num(options.endAlpha, 0),
+                startScale: this._num(options.startScale, 1),
+                endScale: this._num(options.endScale, 0.5),
                 
                 // 速度和方向
-                speed: options.speed || 2,
-                speedVariation: options.speedVariation || 0.5,
-                angle: options.angle || 0,
-                angleSpread: options.angleSpread || 360,
+                speed: this._num(options.speed, 2),
+                speedVariation: this._num(options.speedVariation, 0.5),
+                angle: this._num(options.angle, 0),
+                angleSpread: this._num(options.angleSpread, 360),
                 
                 // 重力
-                gravity: options.gravity || 0
+                gravity: this._num(options.gravity, 0),
+                particleSize: Math.max(1, this._num(options.particleSize, 3))
             },
             
             lastEmitTime: Date.now(),
             particlePool: [] // 对象池
         };
+
+        emitter.container.x = emitter.config.x;
+        emitter.container.y = emitter.config.y;
+        emitter.container.alpha = this._num(options.alpha, 1);
+        emitter.container.rotation = this._num(options.rotation, 0) * Math.PI / 180;
         
         const root = this.engine.getWorldContainer?.() ?? this.engine.app.stage;
         root.addChild(emitter.container);
         this.emitters.push(emitter);
         
         return emitter;
+    }
+
+    updateEmitter(emitter, options = {}) {
+        if (!emitter) return;
+        const config = emitter.config;
+        if (options.x !== undefined) {
+            config.x = this._num(options.x, config.x);
+            emitter.container.x = config.x;
+        }
+        if (options.y !== undefined) {
+            config.y = this._num(options.y, config.y);
+            emitter.container.y = config.y;
+        }
+        if (options.alpha !== undefined) emitter.container.alpha = this._num(options.alpha, emitter.container.alpha);
+        if (options.rotation !== undefined) emitter.container.rotation = this._num(options.rotation, 0) * Math.PI / 180;
+        if (options.isActive !== undefined) emitter.isActive = !!options.isActive;
+
+        const numericKeys = [
+            'emissionRate',
+            'maxParticles',
+            'lifespan',
+            'startAlpha',
+            'endAlpha',
+            'startScale',
+            'endScale',
+            'speed',
+            'speedVariation',
+            'angle',
+            'angleSpread',
+            'gravity',
+            'particleSize'
+        ];
+        numericKeys.forEach((key) => {
+            if (options[key] !== undefined) config[key] = this._num(options[key], config[key]);
+        });
+        if (options.startColor !== undefined) config.startColor = this._color(options.startColor, config.startColor);
+        if (options.endColor !== undefined) config.endColor = this._color(options.endColor, config.endColor);
+
+        config.emissionRate = Math.max(0, config.emissionRate);
+        config.maxParticles = Math.max(1, Math.floor(config.maxParticles));
+        config.lifespan = Math.max(16, config.lifespan);
+        config.particleSize = Math.max(1, config.particleSize);
+
+        while (emitter.particles.length > config.maxParticles) {
+            const particle = emitter.particles.pop();
+            if (particle?.sprite?.parent) particle.sprite.parent.removeChild(particle.sprite);
+            if (particle?.sprite) emitter.particlePool.push(particle.sprite);
+        }
     }
     
     /**
@@ -64,15 +133,13 @@ export class ParticleSystem {
         const now = Date.now();
         
         this.emitters.forEach(emitter => {
-            if (!emitter.isActive) return;
-            
             const config = emitter.config;
             
             // 发射新粒子
             const timeSinceLastEmit = now - emitter.lastEmitTime;
             const emitInterval = 1000 / config.emissionRate;
             
-            if (timeSinceLastEmit >= emitInterval && emitter.particles.length < config.maxParticles) {
+            if (emitter.isActive && config.emissionRate > 0 && timeSinceLastEmit >= emitInterval && emitter.particles.length < config.maxParticles) {
                 this.emitParticle(emitter);
                 emitter.lastEmitTime = now;
             }
@@ -119,10 +186,16 @@ export class ParticleSystem {
         if (emitter.particlePool.length > 0) {
             sprite = emitter.particlePool.pop();
             sprite.alpha = 1;
+            if (sprite.clear) {
+                sprite.clear();
+                sprite.beginFill(0xFFFFFF);
+                sprite.drawCircle(0, 0, config.particleSize);
+                sprite.endFill();
+            }
         } else {
             const graphics = new PIXI.Graphics();
             graphics.beginFill(0xFFFFFF);
-            graphics.drawCircle(0, 0, 3);
+            graphics.drawCircle(0, 0, config.particleSize);
             graphics.endFill();
             sprite = graphics;
         }
@@ -138,8 +211,8 @@ export class ParticleSystem {
             vy: Math.sin(angleRad) * speed
         };
         
-        sprite.x = config.x;
-        sprite.y = config.y;
+        sprite.x = 0;
+        sprite.y = 0;
         sprite.scale.set(config.startScale);
         sprite.tint = config.startColor;
         sprite.alpha = config.startAlpha;
@@ -181,8 +254,9 @@ export class ParticleSystem {
         const index = this.emitters.findIndex(e => e.id === emitterId);
         if (index > -1) {
             const emitter = this.emitters[index];
-            const root = this.engine.getWorldContainer?.() ?? this.engine.app.stage;
-            root.removeChild(emitter.container);
+            if (emitter.container.parent) {
+                emitter.container.parent.removeChild(emitter.container);
+            }
             this.emitters.splice(index, 1);
         }
     }
@@ -191,9 +265,10 @@ export class ParticleSystem {
      * 清空所有粒子
      */
     clear() {
-        const root = this.engine.getWorldContainer?.() ?? this.engine.app.stage;
         this.emitters.forEach(emitter => {
-            root.removeChild(emitter.container);
+            if (emitter.container.parent) {
+                emitter.container.parent.removeChild(emitter.container);
+            }
         });
         this.emitters = [];
     }

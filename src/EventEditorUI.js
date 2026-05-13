@@ -607,6 +607,8 @@ export class EventEditorUI {
                             <option value="fadeOut">淡出</option>
                         </optgroup>
                         <optgroup label="对象">
+                            <option value="spawnObject">生成物体</option>
+                            <option value="deleteObjectsByTag">删除指定标签对象</option>
                             <option value="deleteObject">删除当前对象</option>
                         </optgroup>
                         <optgroup label="场景">
@@ -739,6 +741,132 @@ export class EventEditorUI {
                 return;
             }
 
+            if (type === 'spawnObject') {
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">生成类型</label>
+                        <select id="action-spawn-type" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            <option value="rectangle">矩形</option>
+                            <option value="circle">圆形</option>
+                            <option value="sprite">精灵</option>
+                            <option value="text">文本</option>
+                            <option value="particle">粒子发射器</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">生成位置</label>
+                        <select id="action-spawn-pos-mode" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            <option value="relative">相对当前对象</option>
+                            <option value="absolute">指定绝对坐标</option>
+                        </select>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                        <div>
+                            <label style="color: #aaa; font-size: 13px;">X/偏移X</label>
+                            <input type="number" id="action-spawn-x" value="0" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                        </div>
+                        <div>
+                            <label style="color: #aaa; font-size: 13px;">Y/偏移Y</label>
+                            <input type="number" id="action-spawn-y" value="-30" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                        <div>
+                            <label style="color: #aaa; font-size: 13px;">宽度</label>
+                            <input type="number" id="action-spawn-width" value="40" min="1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                        </div>
+                        <div>
+                            <label style="color: #aaa; font-size: 13px;">高度/半径</label>
+                            <input type="number" id="action-spawn-height" value="40" min="1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                        <div>
+                            <label style="color: #aaa; font-size: 13px;">颜色</label>
+                            <input type="text" id="action-spawn-color" value="0xe74c3c" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                        </div>
+                        <div>
+                            <label style="color: #aaa; font-size: 13px;">标签</label>
+                            <input type="text" id="action-spawn-tag" value="" placeholder="enemy, bullet..." style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">冷却时间(ms)</label>
+                        <input type="number" id="action-spawn-cooldown" value="300" min="0" step="50" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                        <small style="color:#666;font-size:11px;display:block;margin-top:4px;">每帧事件中建议保留冷却，避免瞬间生成过多对象。</small>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">文本内容（生成文本时使用）</label>
+                        <input type="text" id="action-spawn-text" value="新文本" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                    </div>
+                    <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #444;">
+                        <div style="color:#ffc857;font-size:13px;margin-bottom:8px;">粒子参数（生成粒子发射器时使用）</div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">发射率</label>
+                                <input type="number" id="action-spawn-emission-rate" value="20" min="0" step="1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">最大粒子数</label>
+                                <input type="number" id="action-spawn-max-particles" value="80" min="1" step="1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">生命周期(秒)</label>
+                                <input type="number" id="action-spawn-lifespan" value="0.8" min="0.02" step="0.1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">粒子半径</label>
+                                <input type="number" id="action-spawn-particle-size" value="3" min="1" step="1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">结束颜色</label>
+                                <input type="text" id="action-spawn-end-color" value="0xff3300" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">重力</label>
+                                <input type="number" id="action-spawn-gravity" value="0.04" step="0.01" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">方向角</label>
+                                <input type="number" id="action-spawn-angle" value="-90" step="1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">扩散角</label>
+                                <input type="number" id="action-spawn-angle-spread" value="80" min="0" step="1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">速度</label>
+                                <input type="number" id="action-spawn-speed" value="3" step="0.1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                            <div>
+                                <label style="color: #aaa; font-size: 13px;">速度随机</label>
+                                <input type="number" id="action-spawn-speed-var" value="0.5" min="0" step="0.1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            </div>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            if (type === 'deleteObjectsByTag') {
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">要删除的对象标签</label>
+                        <input type="text" id="action-delete-tag" value="pickup_fx" placeholder="如：pickup_fx" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                        <small style="color:#666;font-size:11px;display:block;margin-top:4px;">会删除场景中所有该标签对象，适合同时清理 pickup 特效、敌人子弹等。</small>
+                    </div>
+                `;
+                return;
+            }
+
             if (type === 'setProgress') {
                 paramsDiv.innerHTML = `
                     <div style="margin-bottom: 10px;">
@@ -819,6 +947,40 @@ export class EventEditorUI {
                     params.sceneId = scene ? scene.value : '';
                     const entry = this.engine.sceneManager?.list().find((s) => s.id === params.sceneId);
                     params.sceneName = entry ? entry.name : params.sceneId;
+                } else if (type === 'spawnObject') {
+                    const posMode = overlay.querySelector('#action-spawn-pos-mode')?.value || 'relative';
+                    const sx = parseFloat(overlay.querySelector('#action-spawn-x')?.value || '0') || 0;
+                    const sy = parseFloat(overlay.querySelector('#action-spawn-y')?.value || '0') || 0;
+                    const sizeA = parseFloat(overlay.querySelector('#action-spawn-width')?.value || '40') || 40;
+                    const sizeB = parseFloat(overlay.querySelector('#action-spawn-height')?.value || '40') || 40;
+                    const lifespanSeconds = parseFloat(overlay.querySelector('#action-spawn-lifespan')?.value || '0.8') || 0.8;
+                    params = {
+                        objectType: overlay.querySelector('#action-spawn-type')?.value || 'rectangle',
+                        positionMode: posMode,
+                        offsetX: posMode === 'relative' ? sx : 0,
+                        offsetY: posMode === 'relative' ? sy : 0,
+                        x: posMode === 'absolute' ? sx : 0,
+                        y: posMode === 'absolute' ? sy : 0,
+                        width: sizeA,
+                        height: sizeB,
+                        radius: sizeB,
+                        color: overlay.querySelector('#action-spawn-color')?.value || '0xe74c3c',
+                        endColor: overlay.querySelector('#action-spawn-end-color')?.value || '0xff3300',
+                        tag: overlay.querySelector('#action-spawn-tag')?.value || '',
+                        text: overlay.querySelector('#action-spawn-text')?.value || '新文本',
+                        cooldownMs: parseFloat(overlay.querySelector('#action-spawn-cooldown')?.value || '300') || 0,
+                        emissionRate: parseFloat(overlay.querySelector('#action-spawn-emission-rate')?.value || '20') || 0,
+                        maxParticles: parseFloat(overlay.querySelector('#action-spawn-max-particles')?.value || '80') || 80,
+                        lifespan: Math.max(0.02, lifespanSeconds) * 1000,
+                        particleSize: parseFloat(overlay.querySelector('#action-spawn-particle-size')?.value || '3') || 3,
+                        angle: parseFloat(overlay.querySelector('#action-spawn-angle')?.value || '-90') || 0,
+                        angleSpread: parseFloat(overlay.querySelector('#action-spawn-angle-spread')?.value || '80') || 0,
+                        speed: parseFloat(overlay.querySelector('#action-spawn-speed')?.value || '3') || 0,
+                        speedVariation: parseFloat(overlay.querySelector('#action-spawn-speed-var')?.value || '0.5') || 0,
+                        gravity: parseFloat(overlay.querySelector('#action-spawn-gravity')?.value || '0.04') || 0
+                    };
+                } else if (type === 'deleteObjectsByTag') {
+                    params.tag = overlay.querySelector('#action-delete-tag')?.value || '';
                 } else if (type === 'setProgress') {
                     const el = overlay.querySelector('#action-progress-val');
                     params.value = el ? parseFloat(el.value) : 0;
@@ -939,6 +1101,8 @@ export class EventEditorUI {
             'fadeIn': '淡入',
             'fadeOut': '淡出',
             'deleteObject': '🗑️ 删除当前对象',
+            'deleteObjectsByTag': `🗑️ 删除标签: ${a.params.tag || '?'}`,
+            'spawnObject': `➕ 生成${this._spawnTypeName(a.params.objectType)} (${a.params.positionMode === 'absolute' ? `${a.params.x}, ${a.params.y}` : `偏移${a.params.offsetX || 0}, ${a.params.offsetY || 0}`})`,
             'switchScene': `🚪 切换场景: ${a.params.sceneName || a.params.sceneId || '?'}`,
             'spin': `持续旋转 ${a.params.speed || 5}°`,
             'moveTo': `移动到 (${a.params.targetX}, ${a.params.targetY})`,
@@ -958,6 +1122,17 @@ export class EventEditorUI {
             'setProgress': `📊 进度: ${a.params.value ?? 0}`
         };
         return formats[a.type] || a.type;
+    }
+
+    _spawnTypeName(type) {
+        const names = {
+            rectangle: '矩形',
+            circle: '圆形',
+            sprite: '精灵',
+            text: '文本',
+            particle: '粒子'
+        };
+        return names[type] || '物体';
     }
     
     deleteBehavior(id) {

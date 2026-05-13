@@ -98,6 +98,7 @@ export class RuntimePlayer {
         if (sceneData.animations) {
             this.animationSystem.import(sceneData.animations);
         }
+        this.particleSystem = new ParticleSystem(this);
         this._buildObjects(sceneData);
         this.gameObjects.forEach((obj) => {
             if (obj.type === 'sprite' && obj.properties.animationName) {
@@ -112,7 +113,6 @@ export class RuntimePlayer {
         this._setupPlatformerBehaviors();
         if (this.physicsSystem) this.physicsSystem.start();
         this.behaviorSystem.import(sceneData.behaviors || { behaviors: [] });
-        this.particleSystem = new ParticleSystem(this);
 
         if (restartSystems) {
             this.behaviorSystem.start();
@@ -305,6 +305,9 @@ export class RuntimePlayer {
         const index = this.gameObjects.indexOf(gameObject);
         if (index === -1) return;
 
+        if (gameObject._particleEmitter) {
+            this.particleSystem.removeEmitter(gameObject._particleEmitter.id);
+        }
         if (gameObject.displayObject?.parent) {
             gameObject.displayObject.parent.removeChild(gameObject.displayObject);
         }
@@ -416,10 +419,7 @@ export class RuntimePlayer {
                 gameObject.displayObject = this._createContainer(gameObject.properties);
                 break;
             case 'particle':
-                // 运行态先创建一个容器，占位；真正发射器由 ParticleSystem.createEmitter 管理
-                gameObject.displayObject = new PIXI.Container();
-                gameObject.displayObject.x = gameObject.properties.x;
-                gameObject.displayObject.y = gameObject.properties.y;
+                gameObject.displayObject = this._createParticle(gameObject);
                 break;
             case 'button':
                 gameObject.displayObject = this._createButton(gameObject);
@@ -443,6 +443,34 @@ export class RuntimePlayer {
         container.addChild(gameObject.displayObject);
         this.gameObjects.push(gameObject);
         return gameObject;
+    }
+
+    _createParticle(gameObject) {
+        const props = gameObject.properties;
+        const emitter = this.particleSystem.createEmitter({
+            x: props.x,
+            y: props.y,
+            emissionRate: props.emissionRate || 10,
+            maxParticles: props.maxParticles || 100,
+            lifespan: props.lifespan || 1200,
+            startColor: props.startColor ?? 0xffff00,
+            endColor: props.endColor ?? 0xff3300,
+            startAlpha: props.startAlpha ?? 1,
+            endAlpha: props.endAlpha ?? 0,
+            startScale: props.startScale ?? 1,
+            endScale: props.endScale ?? 0.2,
+            speed: props.speed ?? 3,
+            speedVariation: props.speedVariation ?? 0.5,
+            angle: props.angle ?? -90,
+            angleSpread: props.angleSpread ?? 60,
+            gravity: props.gravity ?? 0.04,
+            particleSize: props.particleSize ?? 3,
+            isActive: props.isActive !== false,
+            alpha: props.alpha,
+            rotation: props.rotation || 0
+        });
+        gameObject._particleEmitter = emitter;
+        return emitter.container;
     }
 
     _createSprite(props) {
