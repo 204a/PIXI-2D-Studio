@@ -19,7 +19,8 @@ export class LayerManager {
             id,
             name: 'Layer 1',
             visible: true,
-            locked: false
+            locked: false,
+            fixed: false
         }];
         this.activeLayerId = id;
     }
@@ -34,7 +35,7 @@ export class LayerManager {
 
     addLayer(name = 'New Layer') {
         const id = `layer_${Date.now()}_${Math.random()}`;
-        this.layers.push({ id, name, visible: true, locked: false });
+        this.layers.push({ id, name, visible: true, locked: false, fixed: false });
         this.activeLayerId = id;
         this.applyToAllObjects();
         return id;
@@ -81,6 +82,14 @@ export class LayerManager {
         const layer = this.getLayer(id);
         if (!layer) return false;
         layer.locked = !layer.locked;
+        this.applyToAllObjects();
+        return true;
+    }
+
+    toggleFixed(id) {
+        const layer = this.getLayer(id);
+        if (!layer) return false;
+        layer.fixed = !layer.fixed;
         this.applyToAllObjects();
         return true;
     }
@@ -156,6 +165,17 @@ export class LayerManager {
             if (!layerOrder.has(lid)) obj.properties.layerId = 'layer_default';
         });
 
+        this.engine.gameObjects.forEach((obj) => {
+            if (obj.parentId || !obj.displayObject) return;
+            const layer = this.getLayer(obj.properties.layerId || 'layer_default');
+            const target = layer?.fixed && this.engine.isRunning && this.engine.getScreenContainer
+                ? this.engine.getScreenContainer()
+                : this.engine.getWorldContainer();
+            if (target && obj.displayObject.parent !== target) {
+                target.addChild(obj.displayObject);
+            }
+        });
+
         LayerManager.assignZOrder(this.engine.gameObjects, { layers: this.layers });
 
         this.engine.gameObjects.forEach((obj) => {
@@ -188,7 +208,8 @@ export class LayerManager {
             id: l.id,
             name: l.name || 'Layer',
             visible: l.visible !== false,
-            locked: !!l.locked
+            locked: !!l.locked,
+            fixed: !!l.fixed
         }));
         this.activeLayerId = data.activeLayerId && this.getLayer(data.activeLayerId)
             ? data.activeLayerId

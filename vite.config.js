@@ -1,7 +1,45 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
+
+function standaloneRuntimeBuildPlugin() {
+  let building = null;
+
+  return {
+    name: 'sge-standalone-runtime-build',
+    configureServer(server) {
+      server.middlewares.use('/__sge_build_standalone', async (_req, res) => {
+        try {
+          if (!building) {
+            building = execFileAsync('npm', ['run', 'build:standalone'], {
+              cwd: process.cwd()
+            }).finally(() => {
+              building = null;
+            });
+          }
+
+          await building;
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: true }));
+        } catch (error) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({
+            ok: false,
+            message: error?.stderr || error?.message || String(error)
+          }));
+        }
+      });
+    }
+  };
+}
 
 export default defineConfig({
+  plugins: [standaloneRuntimeBuildPlugin()],
   server: {
     port: 3000,
     open: true,

@@ -24,6 +24,46 @@ export class BehaviorSystem {
         return this.engine.gameObjects.find((o) => o.id === behavior.objectId) ?? null;
     }
 
+    _findObjectById(id) {
+        if (!id) return null;
+        return this._objectById.get(id) || this.engine.gameObjects.find((o) => o.id === id) || null;
+    }
+
+    _getTextLikeValue(gameObject) {
+        if (!gameObject) return '';
+        if (gameObject.type === 'text') return gameObject.displayObject.text || gameObject.properties.text || '';
+        if (gameObject.type === 'button' && gameObject._buttonLabel) return gameObject._buttonLabel.text || gameObject.properties.label || '';
+        if (gameObject.type === 'inputField' && gameObject._inputText) return gameObject._inputText.text || gameObject.properties.value || '';
+        return '';
+    }
+
+    _findTextLikeTarget(params, fallbackObject) {
+        const direct = this._findObjectById(params.targetId);
+        if (['text', 'button', 'inputField'].includes(direct?.type)) return direct;
+
+        if (params.targetText) {
+            const byText = this.engine.gameObjects.find(
+                (o) => ['text', 'button', 'inputField'].includes(o.type) && this._getTextLikeValue(o) === params.targetText
+            );
+            if (byText) return byText;
+        }
+
+        if (['text', 'button', 'inputField'].includes(fallbackObject?.type)) return fallbackObject;
+        return null;
+    }
+
+    _compareText(actual, operator, expected) {
+        const a = String(actual ?? '');
+        const b = String(expected ?? '');
+        switch (operator) {
+            case 'equals': return a === b;
+            case 'notEquals': return a !== b;
+            case 'contains': return a.includes(b);
+            case 'notContains': return !a.includes(b);
+            default: return false;
+        }
+    }
+
     static _pairKey(idA, idB) {
         return idA < idB ? `${idA}|${idB}` : `${idB}|${idA}`;
     }
@@ -226,18 +266,18 @@ export class BehaviorSystem {
             return;
         }
         
-        // 执行动作
-        behavior.actions.forEach(action => {
-            this.executeAction(obj, action);
-        });
-        
-        // 执行子事件（父事件条件满足时）
+        // 执行子事件（父事件条件满足时）。先跑子事件，避免父事件删除对象后子事件失去上下文。
         if (behavior.subEvents && behavior.subEvents.length > 0) {
             behavior.subEvents.forEach((subEventId) => {
                 const subEvent = this.behaviors.find((b) => b.id === subEventId);
                 if (subEvent) this.executeBehavior(subEvent, objectById);
             });
         }
+
+        // 执行动作
+        behavior.actions.forEach(action => {
+            this.executeAction(obj, action);
+        });
     }
     
     /**
@@ -296,6 +336,38 @@ export class BehaviorSystem {
                 case 'mouseHover':
                     // 检查鼠标是否悬停在对象上
                     return this.isMouseOverObject(gameObject);
+
+                // 按钮条件
+                case 'buttonClicked':
+                    return gameObject.type === 'button' &&
+                        !props.disabled &&
+                        gameObject._buttonClicked === true;
+
+                case 'buttonDown':
+                    return gameObject.type === 'button' &&
+                        !props.disabled &&
+                        gameObject._buttonDown === true;
+
+                case 'buttonHover':
+                    return gameObject.type === 'button' &&
+                        !props.disabled &&
+                        gameObject._buttonHover === true;
+
+                // 输入框条件
+                case 'inputText':
+                    return gameObject.type === 'inputField' &&
+                        this._compareText(props.value || '', condition.textOperator, condition.textValue);
+
+                case 'inputNotEmpty':
+                    return gameObject.type === 'inputField' && String(props.value || '').trim() !== '';
+
+                case 'inputEmpty':
+                    return gameObject.type === 'inputField' && String(props.value || '').trim() === '';
+
+                // 进度条条件
+                case 'progressValue':
+                    return gameObject.type === 'progressBar' &&
+                        this.compareValue(Number(props.value) || 0, condition.operator, condition.value);
                 
                 // 碰撞条件
                 case 'collision':
@@ -419,6 +491,32 @@ export class BehaviorSystem {
                 }
                 break;
 
+            case 'incrementText': {
+                const target = this._findTextLikeTarget(action.params, gameObject);
+                if (!target) break;
+                const delta = Number.isFinite(Number(action.params.delta)) ? Number(action.params.delta) : 1;
+                const current = this._getTextLikeValue(target);
+
+                const match = String(current).match(/-?\d+(?:\.\d+)?(?!.*-?\d)/);
+                const nextText = match
+                    ? String(current).slice(0, match.index) +
+                        String(Number(match[0]) + delta) +
+                        String(current).slice(match.index + match[0].length)
+                    : `${current}${current ? ' ' : ''}${delta}`;
+
+                if (target.type === 'text') {
+                    target.displayObject.text = nextText;
+                    target.properties.text = nextText;
+                } else if (target.type === 'button' && target._buttonLabel) {
+                    target._buttonLabel.text = nextText;
+                    target.properties.label = nextText;
+                } else if (target.type === 'inputField' && target._inputText) {
+                    target._inputText.text = nextText;
+                    target.properties.value = nextText;
+                }
+                break;
+            }
+
             case 'setProgress':
                 if (gameObject.type === 'progressBar' && this.engine.applyProgressBarValue) {
                     this.engine.applyProgressBarValue(gameObject, action.params.value);
@@ -434,6 +532,24 @@ export class BehaviorSystem {
                 obj.alpha = Math.max(0, obj.alpha - 0.02);
                 props.alpha = obj.alpha;
                 break;
+
+            case 'deleteObject':
+                if (this.engine.removeGameObject) {
+                    this.engine.removeGameObject(gameObject, false);
+                }
+                break;
+
+            case 'switchScene': {
+                const sceneId = action.params.sceneId;
+                if (!sceneId) break;
+                const ret = this.engine.switchScene
+                    ? this.engine.switchScene(sceneId)
+                    : this.engine.sceneManager?.switchTo(sceneId);
+                if (ret && typeof ret.catch === 'function') {
+                    ret.catch((err) => console.error('切换场景失败:', err));
+                }
+                break;
+            }
                 
             case 'bounce':
                 // 简单的弹跳效果
@@ -592,7 +708,7 @@ export class BehaviorSystem {
         
         // 执行 'start' 事件
         this.behaviors
-            .filter(b => b.eventType === 'start' && b.enabled)
+            .filter(b => b.eventType === 'start' && b.enabled && !b.parentId)
             .forEach(b => this.executeBehavior(b));
         
         this.updateHandler = () => this._tickBehaviorsFrame();
@@ -620,12 +736,22 @@ export class BehaviorSystem {
         const list = this.behaviors;
         for (let i = 0; i < list.length; i++) {
             const b = list[i];
-            if (b.eventType === 'update' && b.enabled) {
+            if (b.eventType === 'update' && b.enabled && !b.parentId) {
                 this.executeBehavior(b, map);
             }
         }
 
         this._rebuildCollisionPairsEnd();
+
+        for (let i = 0; i < gos.length; i++) {
+            if (gos[i].type === 'button') {
+                gos[i]._buttonClicked = false;
+            }
+        }
+
+        if (this.engine.inputManager) {
+            this.engine.inputManager.update();
+        }
     }
 
     /**

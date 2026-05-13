@@ -12,6 +12,8 @@ export class PlatformerBehavior {
         this.jumpForce = config.jumpForce || 400;
         this.gravity = config.gravity || 800;
         this.maxFallSpeed = config.maxFallSpeed || 600;
+        this.autoFlip = config.autoFlip !== false;
+        this.baseScaleX = Math.abs(gameObject.properties.scaleX || this.obj.scale?.x || 1) || 1;
         
         // 控制键
         this.keys = {
@@ -24,6 +26,33 @@ export class PlatformerBehavior {
         this.velocityY = 0;
         this.isOnGround = false;
         this.canJump = true;
+
+        if (!this.gameObject.properties.facing) {
+            this.gameObject.properties.facing = 'right';
+        }
+        this.syncFacing();
+    }
+
+    /**
+     * 根据 facing 同步视觉朝向；properties.x 始终保留为碰撞用的左上角坐标。
+     */
+    syncFacing() {
+        if (!this.autoFlip || !this.obj.scale) return;
+
+        const props = this.gameObject.properties;
+        const width = props.width || 50;
+        const facingLeft = props.facing === 'left';
+        const scaleX = facingLeft ? -this.baseScaleX : this.baseScaleX;
+
+        this.obj.scale.x = scaleX;
+        this.obj.x = (props.x || 0) + (facingLeft ? width : 0);
+        props.scaleX = scaleX;
+    }
+
+    setFacing(direction) {
+        if (!this.autoFlip || this.gameObject.properties.facing === direction) return;
+        this.gameObject.properties.facing = direction;
+        this.syncFacing();
     }
     
     /**
@@ -34,13 +63,15 @@ export class PlatformerBehavior {
         
         // 水平移动
         if (inputManager.isKeyDown(this.keys.left)) {
-            this.obj.x -= this.speed * dt;
-            this.gameObject.properties.x = this.obj.x;
+            this.gameObject.properties.x -= this.speed * dt;
+            this.setFacing('left');
+            this.syncFacing();
         }
         
         if (inputManager.isKeyDown(this.keys.right)) {
-            this.obj.x += this.speed * dt;
-            this.gameObject.properties.x = this.obj.x;
+            this.gameObject.properties.x += this.speed * dt;
+            this.setFacing('right');
+            this.syncFacing();
         }
         
         // 跳跃
@@ -56,8 +87,8 @@ export class PlatformerBehavior {
         }
         
         // 应用垂直速度
-        this.obj.y += this.velocityY * dt;
-        this.gameObject.properties.y = this.obj.y;
+        this.gameObject.properties.y += this.velocityY * dt;
+        this.obj.y = this.gameObject.properties.y;
         
         // 碰撞检测
         this.isOnGround = false;
@@ -67,8 +98,8 @@ export class PlatformerBehavior {
                     // 站在平台上
                     if (this.velocityY > 0) {
                         const platformTop = platform.displayObject.y;
-                        this.obj.y = platformTop - (this.gameObject.properties.height || 50);
-                        this.gameObject.properties.y = this.obj.y;
+                        this.gameObject.properties.y = platformTop - (this.gameObject.properties.height || 50);
+                        this.obj.y = this.gameObject.properties.y;
                         this.velocityY = 0;
                         this.isOnGround = true;
                     }
@@ -84,13 +115,13 @@ export class PlatformerBehavior {
         const props = this.gameObject.properties;
         const pProps = platform.properties;
         
-        const x1 = this.obj.x;
-        const y1 = this.obj.y;
+        const x1 = props.x || 0;
+        const y1 = props.y || 0;
         const w1 = props.width || 50;
         const h1 = props.height || 50;
         
-        const x2 = platform.displayObject.x;
-        const y2 = platform.displayObject.y;
+        const x2 = pProps.x ?? platform.displayObject.x;
+        const y2 = pProps.y ?? platform.displayObject.y;
         const w2 = pProps.width || 100;
         const h2 = pProps.height || 20;
         

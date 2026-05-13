@@ -371,6 +371,19 @@ export class EventEditorUI {
                             <option value="mouseX">鼠标X坐标</option>
                             <option value="mouseY">鼠标Y坐标</option>
                         </optgroup>
+                        <optgroup label="按钮">
+                            <option value="buttonClicked">按钮被点击</option>
+                            <option value="buttonDown">按钮被按住</option>
+                            <option value="buttonHover">鼠标悬停按钮</option>
+                        </optgroup>
+                        <optgroup label="输入框">
+                            <option value="inputText">输入内容判断</option>
+                            <option value="inputNotEmpty">输入框不为空</option>
+                            <option value="inputEmpty">输入框为空</option>
+                        </optgroup>
+                        <optgroup label="进度条">
+                            <option value="progressValue">进度值判断</option>
+                        </optgroup>
                         <optgroup label="碰撞">
                             <option value="collision">碰撞检测（持续）</option>
                             <option value="collisionEnter">碰撞进入（仅首次接触）</option>
@@ -451,6 +464,52 @@ export class EventEditorUI {
                         </div>
                     `;
                 }
+            } else if (type.startsWith('button')) {
+                paramsDiv.innerHTML = `
+                    <p style="color: #777; font-size: 12px; margin: 0;">
+                        这个条件要绑定在“按钮”对象上。
+                    </p>
+                `;
+            } else if (type === 'inputText') {
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">文字判断</label>
+                        <select id="cond-text-op" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            <option value="equals">等于</option>
+                            <option value="notEquals">不等于</option>
+                            <option value="contains">包含</option>
+                            <option value="notContains">不包含</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">比较内容</label>
+                        <input type="text" id="cond-text-value" value="" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                    </div>
+                `;
+            } else if (type === 'inputNotEmpty' || type === 'inputEmpty') {
+                paramsDiv.innerHTML = `
+                    <p style="color: #777; font-size: 12px; margin: 0;">
+                        这个条件要绑定在“输入框”对象上。
+                    </p>
+                `;
+            } else if (type === 'progressValue') {
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">运算符</label>
+                        <select id="cond-op" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                            <option value=">">大于 (>)</option>
+                            <option value="<">小于 (<)</option>
+                            <option value=">=">大于等于 (>=)</option>
+                            <option value="<=">小于等于 (<=)</option>
+                            <option value="==">等于 (==)</option>
+                            <option value="!=">不等于 (!=)</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">进度值（0 到 1）</label>
+                        <input type="number" id="cond-value" min="0" max="1" step="0.01" value="0.5" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                    </div>
+                `;
             } else if (type === 'collision' || type === 'collisionEnter' || type === 'physicsCollisionEnter') {
                 // 碰撞条件
                 paramsDiv.innerHTML = `
@@ -497,6 +556,14 @@ export class EventEditorUI {
                     condition.key = overlay.querySelector('#cond-key').value;
                 } else if (type === 'collision' || type === 'collisionEnter' || type === 'physicsCollisionEnter') {
                     condition.tag = overlay.querySelector('#cond-tag').value;
+                } else if (type.startsWith('button') || type === 'inputNotEmpty' || type === 'inputEmpty') {
+                    // 无参数条件
+                } else if (type === 'inputText') {
+                    condition.textOperator = overlay.querySelector('#cond-text-op').value;
+                    condition.textValue = overlay.querySelector('#cond-text-value').value;
+                } else if (type === 'progressValue') {
+                    condition.operator = overlay.querySelector('#cond-op').value;
+                    condition.value = parseFloat(overlay.querySelector('#cond-value').value) || 0;
                 } else if (type === 'mouseClicked') {
                     // 无参数
                 } else if (type.startsWith('mouse')) {
@@ -539,6 +606,12 @@ export class EventEditorUI {
                             <option value="fadeIn">淡入</option>
                             <option value="fadeOut">淡出</option>
                         </optgroup>
+                        <optgroup label="对象">
+                            <option value="deleteObject">删除当前对象</option>
+                        </optgroup>
+                        <optgroup label="场景">
+                            <option value="switchScene">切换场景</option>
+                        </optgroup>
                         <optgroup label="高级">
                             <option value="bounce">弹跳</option>
                             <option value="oscillate">振荡</option>
@@ -562,6 +635,7 @@ export class EventEditorUI {
                         </optgroup>
                         <optgroup label="界面">
                             <option value="setText">设置文本</option>
+                            <option value="incrementText">文本数字加一</option>
                             <option value="setProgress">设置进度条 (0–1)</option>
                         </optgroup>
                     </select>
@@ -622,6 +696,44 @@ export class EventEditorUI {
                     <div style="margin-bottom: 10px;">
                         <label style="color: #aaa; font-size: 13px;">文本内容（文本/按钮/输入框）</label>
                         <input type="text" id="action-settext-val" value="" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                    </div>
+                `;
+                return;
+            }
+
+            if (type === 'incrementText') {
+                const textObjects = this.engine.gameObjects.filter((o) => ['text', 'button', 'inputField'].includes(o.type));
+                const options = textObjects.length
+                    ? textObjects.map((o) => {
+                        const label = this.editorUI?.getObjectLabel
+                            ? this.editorUI.getObjectLabel(o)
+                            : `${o.type} · ${o.properties.name || o.properties.text || o.properties.label || o.properties.value || o.properties.placeholder || o.id.slice(-6)}`;
+                        return `<option value="${this._escapeHtml(o.id)}">${this._escapeHtml(label)}</option>`;
+                    }).join('')
+                    : '<option value="">(请先创建文本对象)</option>';
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">目标文本对象</label>
+                        <select id="action-inc-target" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">${options}</select>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">增加值</label>
+                        <input type="number" id="action-inc-delta" value="1" step="1" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">
+                    </div>
+                    <p style="color: #777; font-size: 12px; margin: 0;">示例：Score: 0 会变成 Score: 1。</p>
+                `;
+                return;
+            }
+
+            if (type === 'switchScene') {
+                const scenes = this.engine.sceneManager ? this.engine.sceneManager.list() : [];
+                const options = scenes.length
+                    ? scenes.map((s) => `<option value="${this._escapeHtml(s.id)}">${this._escapeHtml(s.name)} · ${this._escapeHtml(s.id)}</option>`).join('')
+                    : '<option value="">(暂无其它场景)</option>';
+                paramsDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <label style="color: #aaa; font-size: 13px;">目标场景</label>
+                        <select id="action-scene-id" style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px; margin-top: 5px;">${options}</select>
                     </div>
                 `;
                 return;
@@ -688,6 +800,25 @@ export class EventEditorUI {
                 } else if (type === 'setText') {
                     const el = overlay.querySelector('#action-settext-val');
                     params.text = el ? el.value : '';
+                } else if (type === 'incrementText') {
+                    const target = overlay.querySelector('#action-inc-target');
+                    const delta = overlay.querySelector('#action-inc-delta');
+                    params.targetId = target ? target.value : '';
+                    const targetObj = this.engine.gameObjects.find((o) => o.id === params.targetId);
+                    params.targetText = targetObj
+                        ? targetObj.type === 'text'
+                            ? (targetObj.properties.text || '')
+                            : targetObj.type === 'button'
+                                ? (targetObj.properties.label || '')
+                                : (targetObj.properties.value || targetObj.properties.placeholder || '')
+                        : '';
+                    params.delta = delta ? parseFloat(delta.value) : 1;
+                    if (Number.isNaN(params.delta)) params.delta = 1;
+                } else if (type === 'switchScene') {
+                    const scene = overlay.querySelector('#action-scene-id');
+                    params.sceneId = scene ? scene.value : '';
+                    const entry = this.engine.sceneManager?.list().find((s) => s.id === params.sceneId);
+                    params.sceneName = entry ? entry.name : params.sceneId;
                 } else if (type === 'setProgress') {
                     const el = overlay.querySelector('#action-progress-val');
                     params.value = el ? parseFloat(el.value) : 0;
@@ -722,6 +853,13 @@ export class EventEditorUI {
             'mouseHover': '🖱️ 鼠标悬停',
             'mouseX': '🖱️ 鼠标X',
             'mouseY': '🖱️ 鼠标Y',
+            'buttonClicked': '按钮被点击',
+            'buttonDown': '按钮被按住',
+            'buttonHover': '鼠标悬停按钮',
+            'inputText': '输入内容',
+            'inputNotEmpty': '输入框不为空',
+            'inputEmpty': '输入框为空',
+            'progressValue': '进度值',
             'collision': '💥 碰撞',
             'collisionEnter': '💥 碰撞进入',
             'physicsCollisionEnter': '🧱 物理碰撞进入'
@@ -755,6 +893,28 @@ export class EventEditorUI {
         if (c.type === 'mouseClicked' || c.type === 'mouseDown' || c.type === 'mouseReleased' || c.type === 'mouseHover') {
             return names[c.type];
         }
+
+        if (c.type.startsWith('button')) {
+            return `🔘 ${names[c.type]}`;
+        }
+
+        if (c.type === 'inputText') {
+            const opNames = {
+                equals: '等于',
+                notEquals: '不等于',
+                contains: '包含',
+                notContains: '不包含'
+            };
+            return `⌨️ 输入内容 ${opNames[c.textOperator] || c.textOperator} "${c.textValue || ''}"`;
+        }
+
+        if (c.type === 'inputNotEmpty' || c.type === 'inputEmpty') {
+            return `⌨️ ${names[c.type]}`;
+        }
+
+        if (c.type === 'progressValue') {
+            return `📊 进度值 ${c.operator} ${c.value}`;
+        }
         
         if (c.type.startsWith('mouse')) {
             return `${names[c.type]} ${c.operator} ${c.value}`;
@@ -778,6 +938,8 @@ export class EventEditorUI {
             'setPosition': `到位置 (${a.params.x}, ${a.params.y})`,
             'fadeIn': '淡入',
             'fadeOut': '淡出',
+            'deleteObject': '🗑️ 删除当前对象',
+            'switchScene': `🚪 切换场景: ${a.params.sceneName || a.params.sceneId || '?'}`,
             'spin': `持续旋转 ${a.params.speed || 5}°`,
             'moveTo': `移动到 (${a.params.targetX}, ${a.params.targetY})`,
             'playAnimation': '▶ 播放动画',
@@ -792,6 +954,7 @@ export class EventEditorUI {
             'playMusic': `🎵 音乐: ${a.params.name || '?'} (音量${a.params.volume ?? 0.7})`,
             'stopMusic': `⏹ 停音乐 (淡出 ${a.params.fadeOut ?? 0}s)`,
             'setText': `📝 文本: ${a.params.text ?? ''}`,
+            'incrementText': `➕ ${a.params.targetText ? `${a.params.targetText} ` : '文本数字 '}+${a.params.delta ?? 1}`,
             'setProgress': `📊 进度: ${a.params.value ?? 0}`
         };
         return formats[a.type] || a.type;

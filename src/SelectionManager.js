@@ -259,7 +259,12 @@ export class SelectionManager {
             }
         });
         
-        // 为选中对象添加边框
+        // 单选时 TransformControls 已经显示控制框，避免出现两套蓝框。
+        if (this.selectedObjects.length === 1) {
+            return;
+        }
+
+        // 为多选对象添加边框
         this.selectedObjects.forEach(obj => {
             this.addSelectionOutline(obj);
         });
@@ -278,7 +283,18 @@ export class SelectionManager {
         outline.clear();
         outline.visible = true;
         
-        const bounds = obj.displayObject.getLocalBounds();
+        let bounds = obj.displayObject.getLocalBounds();
+        if (obj.type === 'circle') {
+            const r = obj.properties.radius || 50;
+            bounds = { x: 0, y: 0, width: r * 2, height: r * 2 };
+        } else if (obj.type === 'container') {
+            bounds = {
+                x: 0,
+                y: 0,
+                width: obj.properties.width || 100,
+                height: obj.properties.height || 100
+            };
+        }
         outline.lineStyle(2, 0x2196F3, 1);
         outline.drawRect(bounds.x, bounds.y, bounds.width, bounds.height);
     }

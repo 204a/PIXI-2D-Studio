@@ -323,21 +323,6 @@ export class EditorUI {
      * 设置工具栏
      */
     setupToolbar() {
-        // 运行按钮
-        document.getElementById('btn-play').addEventListener('click', () => {
-            this.engine.play();
-            this.updateStatus('游戏运行中...');
-            this.setRunningMode(true);
-        });
-        
-        // 停止按钮
-        document.getElementById('btn-stop').addEventListener('click', () => {
-            this.engine.stop();
-            this.updateStatus('游戏已停止');
-            this.updateSceneObjectList();
-            this.setRunningMode(false);
-        });
-        
         // 清空按钮
         document.getElementById('btn-clear').addEventListener('click', () => {
             if (confirm('确定要清空场景吗？')) {
@@ -575,8 +560,8 @@ export class EditorUI {
         const btnExportHtml = document.getElementById('btn-export-html');
         const btnImport = document.getElementById('btn-import');
 
-        btnPlay.disabled = isRunning;
-        btnStop.disabled = !isRunning;
+        if (btnPlay) btnPlay.disabled = isRunning;
+        if (btnStop) btnStop.disabled = !isRunning;
         btnClear.disabled = isRunning;
         btnExport.disabled = isRunning;
         if (btnExportHtml) btnExportHtml.disabled = isRunning;
@@ -585,8 +570,8 @@ export class EditorUI {
         if (btnPlayable) btnPlayable.disabled = isRunning;
 
         // 按钮样式
-        btnPlay.style.opacity = isRunning ? '0.5' : '1';
-        btnStop.style.opacity = !isRunning ? '0.5' : '1';
+        if (btnPlay) btnPlay.style.opacity = isRunning ? '0.5' : '1';
+        if (btnStop) btnStop.style.opacity = !isRunning ? '0.5' : '1';
         btnClear.style.opacity = isRunning ? '0.5' : '1';
         btnExport.style.opacity = isRunning ? '0.5' : '1';
         if (btnExportHtml) btnExportHtml.style.opacity = isRunning ? '0.5' : '1';
@@ -701,6 +686,11 @@ export class EditorUI {
             <div class="property-group">
                 <label>对象ID</label>
                 <input type="text" value="${gameObject.id}" disabled>
+            </div>
+
+            <div class="property-group">
+                <label>对象名称（方便下拉框识别）</label>
+                <input type="text" id="prop-name" value="${this._escapeAttr(props.name || '')}" ${dis} placeholder="如：玩家、开始按钮、分数文字" style="width:100%;padding:8px;background:#333;border:1px solid #444;color:#fff;border-radius:4px;">
             </div>
             
             <div class="property-group">
@@ -1076,7 +1066,7 @@ export class EditorUI {
                     <div style="background: #2a2a2a; padding: 8px; border-radius: 4px; font-size: 12px;">
                         ${children.length > 0 ? children.map(c => `
                             <div style="padding: 4px; margin: 2px 0; background: #333; border-radius: 3px;">
-                                ${this.getObjectIcon(c.type)} ${c.type}
+                                ${this.getObjectLabel(c)}
                                 <button onclick="window.editorUI.removeFromContainer('${c.id}')" style="float: right; font-size: 10px; padding: 2px 6px; background: #e74c3c; color: white; border: none; border-radius: 2px; cursor: pointer;">移除</button>
                             </div>
                         `).join('') : '<div style="color: #666;">无子对象</div>'}
@@ -1092,7 +1082,7 @@ export class EditorUI {
                 <div class="property-group">
                     <label>父容器</label>
                     <div style="background: #2a2a2a; padding: 8px; border-radius: 4px;">
-                        ${parent ? `${this.getObjectIcon(parent.type)} ${parent.type}` : '未知'}
+                        ${parent ? this.getObjectLabel(parent) : '未知'}
                         <button onclick="window.editorUI.removeFromContainer('${gameObject.id}')" style="margin-left: 10px; padding: 4px 8px; background: #e74c3c; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">移出容器</button>
                     </div>
                 </div>
@@ -1109,7 +1099,7 @@ export class EditorUI {
                     <select id="select-container" ${dis} style="width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: #fff; border-radius: 4px;">
                             <option value="">选择容器...</option>
                             ${containers.map(c => `
-                                <option value="${c.id}">${this.getObjectIcon(c.type)} ${c.type} - ${c.id.substring(0, 8)}</option>
+                                <option value="${this._escapeAttr(c.id)}">${this._escapeHtml(this.getObjectLabel(c))}</option>
                             `).join('')}
                         </select>
                     <button id="btn-add-to-container" ${dis} style="width: 100%; margin-top: 8px; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">添加到容器</button>
@@ -1192,6 +1182,7 @@ export class EditorUI {
      */
     bindPropertyInputs(gameObject) {
         const inputs = {
+            'prop-name': 'name',
             'prop-x': 'x',
             'prop-y': 'y',
             'prop-alpha': 'alpha',
@@ -1222,11 +1213,17 @@ export class EditorUI {
                         value = parseInt(value, 16) || 0;
                     }
                     
-                    // tag是字符串，直接赋值
-                    if (propName === 'tag') {
-                        gameObject.properties.tag = value;
+                    // name/tag 是字符串，直接赋值并刷新相关列表
+                    if (propName === 'name' || propName === 'tag') {
+                        gameObject.properties[propName] = value;
+                        if (propName === 'name' || propName === 'tag') {
+                            this.updateSceneObjectList();
+                        }
                     } else {
                         this.engine.updateObjectProperties(gameObject, { [propName]: value });
+                        if (propName === 'text') {
+                            this.updateSceneObjectList();
+                        }
                     }
                 });
             }
@@ -1244,6 +1241,7 @@ export class EditorUI {
         if (labelIn) {
             labelIn.addEventListener('input', () => {
                 this.engine.updateObjectProperties(gameObject, { label: labelIn.value });
+                this.updateSceneObjectList();
             });
         }
         const pval = document.getElementById('prop-progress-value');
@@ -1257,12 +1255,14 @@ export class EditorUI {
             ph.addEventListener('input', () => {
                 gameObject.properties.placeholder = ph.value;
                 this.engine.updateObjectProperties(gameObject, { placeholder: ph.value });
+                this.updateSceneObjectList();
             });
         }
         const iv = document.getElementById('prop-input-value');
         if (iv) {
             iv.addEventListener('input', () => {
                 this.engine.updateObjectProperties(gameObject, { value: iv.value });
+                this.updateSceneObjectList();
             });
         }
         const bf = document.getElementById('prop-btn-font');
@@ -1754,12 +1754,26 @@ export class EditorUI {
                 ${level > 0 ? 'border-left: 2px solid #9b59b6;' : ''}
             ">
                 <div style="font-size: 13px;">
-                    ${level > 0 ? '└ ' : ''}${this.getObjectIcon(obj.type)} ${obj.type}
+                    ${level > 0 ? '└ ' : ''}${this._escapeHtml(this.getObjectLabel(obj))}
                     ${obj.type === 'container' ? ` (${this.engine.getContainerChildren(obj).length})` : ''}
                 </div>
                 <div style="font-size: 11px; color: #999; margin-top: 2px;">ID: ${obj.id.substring(0, 12)}...</div>
             </div>
         `;
+    }
+
+    getObjectLabel(obj) {
+        if (!obj) return '未知对象';
+        const props = obj.properties || {};
+        const primary =
+            props.name ||
+            (obj.type === 'text' ? props.text : '') ||
+            (obj.type === 'button' ? props.label : '') ||
+            (obj.type === 'inputField' ? (props.value || props.placeholder) : '') ||
+            props.tag ||
+            '';
+        const text = primary ? `「${primary}」` : `${obj.type}`;
+        return `${this.getObjectIcon(obj.type)} ${text} · ${obj.type} · ${String(obj.id).slice(-6)}`;
     }
     
     /**
@@ -2181,11 +2195,12 @@ export class EditorUI {
         const btnAdd = document.getElementById('btn-layer-add');
         const btnAssign = document.getElementById('btn-layer-assign');
         if (btnAdd) {
-            btnAdd.addEventListener('click', () => {
-                const name = prompt('图层名称', 'New Layer');
+            btnAdd.addEventListener('click', async () => {
+                const name = await this._showTextPrompt('图层名称', 'New Layer');
                 if (!name) return;
                 this.engine.layerManager.addLayer(name);
                 this.refreshLayerList();
+                this.refreshSelectedObjectProperties();
                 this.updateStatus('已创建图层: ' + name);
             });
         }
@@ -2197,10 +2212,12 @@ export class EditorUI {
                 if (sel && sel.length > 0) {
                     lm.assignObjectsToLayer(sel, lid);
                     this.updateSceneObjectList();
+                    this.refreshSelectedObjectProperties();
                     this.updateStatus('已将选中对象放入当前图层');
                 } else if (this.engine.selectedObject) {
                     lm.assignObjectsToLayer([this.engine.selectedObject], lid);
                     this.updateSceneObjectList();
+                    this.refreshSelectedObjectProperties();
                     this.updateStatus('已将对象放入当前图层');
                 } else {
                     this.updateStatus('请先选中对象');
@@ -2208,6 +2225,49 @@ export class EditorUI {
             });
         }
         this.refreshLayerList();
+    }
+
+    refreshSelectedObjectProperties() {
+        if (!this.engine.selectedObject || this.engine.isRunning) return;
+        if (this.engine.transformControls) {
+            this.engine.transformControls.selectObject(this.engine.selectedObject);
+        }
+        this.updatePropertiesPanel(this.engine.selectedObject);
+    }
+
+    async _showTextPrompt(title, defaultValue = '') {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:20000;';
+            overlay.innerHTML = `
+                <div style="width:360px;background:#252525;border:1px solid #444;border-radius:8px;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,0.4);">
+                    <h3 style="margin:0 0 12px 0;color:#fff;font-size:16px;">${this._escapeHtml(title)}</h3>
+                    <input id="text-prompt-input" type="text" value="${this._escapeAttr(defaultValue)}" style="width:100%;box-sizing:border-box;padding:10px;background:#333;border:1px solid #555;color:#fff;border-radius:4px;">
+                    <div style="display:flex;gap:10px;margin-top:14px;">
+                        <button id="text-prompt-ok" type="button" style="flex:1;padding:9px;background:#4CAF50;color:#fff;border:none;border-radius:4px;cursor:pointer;">确定</button>
+                        <button id="text-prompt-cancel" type="button" style="flex:1;padding:9px;background:#666;color:#fff;border:none;border-radius:4px;cursor:pointer;">取消</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            const input = overlay.querySelector('#text-prompt-input');
+            const cleanup = (value) => {
+                overlay.remove();
+                resolve(value);
+            };
+            overlay.querySelector('#text-prompt-ok')?.addEventListener('click', () => cleanup(input.value.trim()));
+            overlay.querySelector('#text-prompt-cancel')?.addEventListener('click', () => cleanup(null));
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) cleanup(null);
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') cleanup(input.value.trim());
+                if (e.key === 'Escape') cleanup(null);
+            });
+            input.focus();
+            input.select();
+        });
     }
 
     refreshLayerList() {
@@ -2218,7 +2278,7 @@ export class EditorUI {
         el.innerHTML = layers.map((l) => `
             <div class="layer-item" style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid #333;">
                 <button type="button" class="btn-layer-activate" style="flex:1; text-align:left; padding:6px 8px; background:${lm.activeLayerId===l.id?'#2a3a2a':'#2a2a2a'}; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer;">
-                    ${l.visible ? '👁️' : '🚫'} ${l.locked ? '🔒' : '🔓'} ${this._escapeHtml(l.name)}
+                    ${l.visible ? '👁️' : '🚫'} ${l.locked ? '🔒' : '🔓'} ${l.fixed ? '📌' : '🎥'} ${this._escapeHtml(l.name)}
                 </button>
                 <button type="button" class="btn-layer-up" style="padding:6px 8px; background:#333; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer;">↑</button>
                 <button type="button" class="btn-layer-down" style="padding:6px 8px; background:#333; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer;">↓</button>
@@ -2226,6 +2286,7 @@ export class EditorUI {
             <div class="layer-actions" style="display:flex; gap:6px; padding:6px 0 10px 0;">
                 <button type="button" class="btn-layer-vis" style="flex:1; padding:6px; background:#333; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer; font-size:12px;">${l.visible?'隐藏':'显示'}</button>
                 <button type="button" class="btn-layer-lock" style="flex:1; padding:6px; background:#333; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer; font-size:12px;">${l.locked?'解锁':'锁定'}</button>
+                <button type="button" class="btn-layer-fixed" style="flex:1; padding:6px; background:${l.fixed?'#2a5a8a':'#333'}; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer; font-size:12px;">${l.fixed?'固定':'跟随'}</button>
                 <button type="button" class="btn-layer-rename" style="flex:1; padding:6px; background:#333; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer; font-size:12px;">改名</button>
                 <button type="button" class="btn-layer-del" style="flex:1; padding:6px; background:#e74c3c; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px;">删</button>
             </div>
@@ -2237,15 +2298,18 @@ export class EditorUI {
             itemEl.querySelector('.btn-layer-activate')?.addEventListener('click', () => {
                 lm.setActiveLayer(layer.id);
                 this.refreshLayerList();
+                this.refreshSelectedObjectProperties();
                 this.updateStatus('当前图层: ' + layer.name);
             });
             itemEl.querySelector('.btn-layer-up')?.addEventListener('click', () => {
                 lm.moveLayer(layer.id, -1);
                 this.refreshLayerList();
+                this.refreshSelectedObjectProperties();
             });
             itemEl.querySelector('.btn-layer-down')?.addEventListener('click', () => {
                 lm.moveLayer(layer.id, 1);
                 this.refreshLayerList();
+                this.refreshSelectedObjectProperties();
             });
         });
 
@@ -2256,16 +2320,28 @@ export class EditorUI {
                 lm.toggleVisible(layer.id);
                 this.refreshLayerList();
                 this.updateSceneObjectList();
+                this.refreshSelectedObjectProperties();
             });
             actionEl.querySelector('.btn-layer-lock')?.addEventListener('click', () => {
                 lm.toggleLocked(layer.id);
                 this.refreshLayerList();
+                this.refreshSelectedObjectProperties();
             });
-            actionEl.querySelector('.btn-layer-rename')?.addEventListener('click', () => {
-                const name = prompt('图层名称', layer.name);
+            actionEl.querySelector('.btn-layer-fixed')?.addEventListener('click', () => {
+                lm.toggleFixed(layer.id);
+                const isFixed = !!lm.getLayer(layer.id)?.fixed;
+                this.refreshLayerList();
+                this.updateSceneObjectList();
+                this.refreshSelectedObjectProperties();
+                this.updateStatus(isFixed ? '图层已固定在画面' : '图层已跟随相机');
+            });
+            actionEl.querySelector('.btn-layer-rename')?.addEventListener('click', async () => {
+                const name = await this._showTextPrompt('图层名称', layer.name);
                 if (!name) return;
                 lm.renameLayer(layer.id, name);
                 this.refreshLayerList();
+                this.refreshSelectedObjectProperties();
+                this.updateStatus('已改名图层: ' + name);
             });
             actionEl.querySelector('.btn-layer-del')?.addEventListener('click', () => {
                 if (!confirm('删除图层：' + layer.name + '？')) return;
@@ -2275,6 +2351,7 @@ export class EditorUI {
                 }
                 this.refreshLayerList();
                 this.updateSceneObjectList();
+                this.refreshSelectedObjectProperties();
             });
         });
     }
@@ -2330,9 +2407,9 @@ export class EditorUI {
             this.updateStatus('已应用项目设置');
         });
 
-        document.getElementById('btn-cam-apply')?.addEventListener('click', () => {
+        this.applyCameraSettingsFromForm = (showStatus = true) => {
             const cm = this.engine.cameraManager;
-            if (!cm) return;
+            if (!cm) return false;
             const fid = document.getElementById('camera-follow-select')?.value || '';
             cm.followTargetId = fid || null;
             const bx = parseFloat(document.getElementById('cam-bx')?.value);
@@ -2346,11 +2423,22 @@ export class EditorUI {
             }
             cm.smoothing = Math.min(1, Math.max(0, parseFloat(document.getElementById('cam-smooth')?.value) || 0.12));
             cm.enabled = !!document.getElementById('cam-enabled')?.checked;
-            this.updateStatus('已应用相机');
+            if (showStatus) this.updateStatus('已应用相机');
+            return true;
+        };
+
+        document.getElementById('btn-cam-apply')?.addEventListener('click', () => {
+            this.applyCameraSettingsFromForm(true);
+        });
+
+        ['camera-follow-select', 'cam-bx', 'cam-by', 'cam-bw', 'cam-bh', 'cam-smooth', 'cam-enabled'].forEach((id) => {
+            const el = document.getElementById(id);
+            const eventName = el?.type === 'checkbox' || el?.tagName === 'SELECT' ? 'change' : 'input';
+            el?.addEventListener(eventName, () => this.applyCameraSettingsFromForm(false));
         });
 
         document.getElementById('btn-scene-add')?.addEventListener('click', async () => {
-            const name = prompt('新场景名称', '场景');
+            const name = await this._showTextPrompt('新场景名称', '场景');
             if (name === null) return;
             await this.engine.sceneManager.addScene(name || '新场景');
             this.syncProjectCameraForms();
@@ -2366,7 +2454,7 @@ export class EditorUI {
             const cur = this.engine.cameraManager.followTargetId;
             sel.innerHTML = '<option value="">（不跟随）</option>' +
                 this.engine.gameObjects.map((o) =>
-                    `<option value="${this._escapeAttr(o.id)}">${this._escapeHtml(o.type)} · ${this._escapeHtml(o.id.slice(-8))}</option>`
+                    `<option value="${this._escapeAttr(o.id)}">${this._escapeHtml(this.getObjectLabel(o))}</option>`
                 ).join('');
             sel.value = cur || '';
         };
@@ -2399,10 +2487,10 @@ export class EditorUI {
                 });
             });
             el.querySelectorAll('.btn-scene-ren').forEach((btn) => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const id = btn.getAttribute('data-scene-id');
                     const row = sm.list().find((x) => x.id === id);
-                    const nn = prompt('场景名称', row?.name || '');
+                    const nn = await this._showTextPrompt('场景名称', row?.name || '');
                     if (nn === null || !nn.trim()) return;
                     sm.renameScene(id, nn.trim());
                     this.updateStatus('已改名场景: ' + nn.trim());
@@ -2437,10 +2525,28 @@ export class EditorUI {
         return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     }
 
+    async _rebuildStandaloneRuntimeIfDev() {
+        if (!import.meta.env.DEV) return;
+
+        this.updateStatus('正在更新独立运行时…');
+        const res = await fetch('/__sge_build_standalone', {
+            method: 'POST',
+            cache: 'no-store'
+        });
+        let payload = null;
+        try {
+            payload = await res.json();
+        } catch {}
+
+        if (!res.ok || payload?.ok === false) {
+            throw new Error(payload?.message || '独立运行时自动构建失败');
+        }
+    }
+
     async _fetchStandaloneRuntimeJs() {
         const res = await fetch(`${import.meta.env.BASE_URL}sge-standalone.js`, { cache: 'no-store' });
         if (!res.ok) {
-            throw new Error('找不到 sge-standalone.js，请先执行 npm run build:standalone');
+            throw new Error('找不到 sge-standalone.js，独立运行时尚未生成');
         }
         return res.text();
     }
@@ -2489,6 +2595,7 @@ export class EditorUI {
         if (this.engine.isRunning) return;
         this.updateStatus('正在打包独立 HTML…');
         try {
+            await this._rebuildStandaloneRuntimeIfDev();
             const runtimeJs = await this._fetchStandaloneRuntimeJs();
             const sceneData = this.engine.exportScene();
             const html = this._buildStandaloneHtmlDocument(sceneData, runtimeJs);
@@ -2537,7 +2644,7 @@ export class EditorUI {
      */
     async importSceneFromFile(file) {
         if (this.engine.isRunning) {
-            this.engine.stop();
+            await this.engine.stop();
             this.setRunningMode(false);
         }
         try {
@@ -2552,6 +2659,7 @@ export class EditorUI {
             this.clearPropertiesPanel();
             this.refreshAudioList();
             this.updateSceneObjectList();
+            this.refreshLayerList();
             if (window.eventEditorUI) {
                 window.eventEditorUI.updateEventsList(null);
             }
@@ -2575,10 +2683,17 @@ export class EditorUI {
             if (e.key === 'Escape') {
                 if (this.engine.isRunning) {
                     e.preventDefault();
-                    this.engine.stop();
+                    this.engine.stop().then(() => {
+                        this.updateSceneObjectList();
+                        this.refreshLayerList();
+                        if (typeof this.syncProjectCameraForms === 'function') {
+                            this.syncProjectCameraForms();
+                        }
+                        this.clearPropertiesPanel();
+                        if (window.eventEditorUI) window.eventEditorUI.updateEventsList(null);
+                        this.setRunningMode(false);
+                    });
                     this.updateStatus('游戏已停止');
-                    this.updateSceneObjectList();
-                    this.setRunningMode(false);
                 }
                 return;
             }

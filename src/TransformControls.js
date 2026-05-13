@@ -150,9 +150,9 @@ export class TransformControls {
             return;
         }
         
-        // 确保容器已添加到viewport
-        if (!this.container.parent) {
-            const parent = this.engine.viewportController ? this.engine.viewportController.viewport : this.engine.app.stage;
+        const parent = this.engine.viewportController ? this.engine.viewportController.viewport : this.engine.app.stage;
+        if (this.container.parent !== parent) {
+            if (this.container.parent) this.container.parent.removeChild(this.container);
             parent.addChild(this.container);
         }
         
@@ -174,7 +174,9 @@ export class TransformControls {
         const bounds = this.getVisualBoundsForGizmo();
 
         // 获取viewport缩放（如果存在）
-        const viewportScale = this.engine.viewportController ? this.engine.viewportController.scale : 1;
+        const viewportScale = this.container.parent === this.engine.getScreenContainer?.()
+            ? 1
+            : (this.engine.viewportController ? this.engine.viewportController.scale : 1);
         const lineWidth = 2 / viewportScale; // 补偿缩放，保持视觉粗细
 
         // 绘制边框
@@ -232,6 +234,25 @@ export class TransformControls {
      */
     getVisualBoundsForGizmo() {
         const disp = this.selectedObject.displayObject;
+        const props = this.selectedObject.properties;
+        if (this.selectedObject.type === 'container' && Math.abs(disp.rotation || 0) < 1e-4) {
+            return {
+                x: props.x ?? disp.x,
+                y: props.y ?? disp.y,
+                width: props.width || 100,
+                height: props.height || 100
+            };
+        }
+        if (this.selectedObject.type === 'circle' && Math.abs(disp.rotation || 0) < 1e-4) {
+            const diameter = (props.radius || 50) * 2;
+            return {
+                x: props.x ?? disp.x,
+                y: props.y ?? disp.y,
+                width: diameter,
+                height: diameter
+            };
+        }
+
         const parent = this.container.parent;
         const wb = disp.getBounds();
         if (!parent) {
@@ -361,6 +382,9 @@ export class TransformControls {
         } else {
             this.applyTransform(bounds);
         }
+        if (this.engine.selectionManager) {
+            this.engine.selectionManager.updateVisualFeedback();
+        }
         this.updateTransform();
         
         // 通知UI更新
@@ -460,6 +484,8 @@ export class TransformControls {
         } else if (t === 'circle') {
             const r = Math.max(5, (props.radius || 50) * s);
             props.radius = r;
+            props.width = r * 2;
+            props.height = r * 2;
             obj.clear();
             obj.beginFill(props.color || 0x2ecc71);
             obj.drawCircle(r, r, r);
@@ -507,8 +533,38 @@ export class TransformControls {
             props.width = bounds.width;
             props.height = bounds.height;
         } else if (this.selectedObject.type === 'circle') {
-            const radius = Math.min(bounds.width, bounds.height) / 2;
+            const old = this.objStartBounds || this.getObjectBounds();
+            let diameter = Math.min(bounds.width, bounds.height);
+            switch (this.dragHandle) {
+                case 'middleLeft':
+                case 'middleRight':
+                    diameter = bounds.width;
+                    bounds.height = diameter;
+                    break;
+                case 'topCenter':
+                case 'bottomCenter':
+                    diameter = bounds.height;
+                    bounds.width = diameter;
+                    break;
+                default:
+                    diameter = Math.min(bounds.width, bounds.height);
+                    bounds.width = diameter;
+                    bounds.height = diameter;
+            }
+            diameter = Math.max(10, diameter);
+
+            if (this.dragHandle?.includes('Left')) bounds.x = old.x + old.width - diameter;
+            if (this.dragHandle?.includes('top') || this.dragHandle === 'topCenter') bounds.y = old.y + old.height - diameter;
+
+            obj.x = bounds.x;
+            obj.y = bounds.y;
+            props.x = bounds.x;
+            props.y = bounds.y;
+
+            const radius = diameter / 2;
             props.radius = radius;
+            props.width = diameter;
+            props.height = diameter;
             
             // 重绘圆形
             obj.clear();
@@ -531,6 +587,7 @@ export class TransformControls {
             // 容器需要特殊处理
             props.width = bounds.width;
             props.height = bounds.height;
+            this.engine.redrawContainerIndicator(obj, props);
         } else if (['button', 'progressBar', 'inputField'].includes(this.selectedObject.type)) {
             props.width = bounds.width;
             props.height = bounds.height;

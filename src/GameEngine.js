@@ -34,6 +34,15 @@ export class GameEngine {
         return this.viewportController ? this.viewportController.viewport : this.app.stage;
     }
 
+    getScreenContainer() {
+        if (!this.screenContainer) {
+            this.screenContainer = new PIXI.Container();
+            this.screenContainer.sortableChildren = true;
+            this.app.stage.addChild(this.screenContainer);
+        }
+        return this.screenContainer;
+    }
+
     constructor(containerId) {
         this.containerId = containerId;
         this.app = null;
@@ -41,6 +50,8 @@ export class GameEngine {
         this.selectedObject = null; // 当前选中的对象
         this.isRunning = false; // 是否在运行模式
         this.initialStates = []; // 初始状态快照
+        this.playSnapshot = null; // 编辑器游玩前的完整工程快照
+        this.screenContainer = null; // 固定在画面上的 UI 图层容器
         
         // 键盘输入状态
         this.keys = {};
@@ -130,6 +141,7 @@ export class GameEngine {
         
         // 初始化视口控制器（必须在其他系统之前）
         this.viewportController = new ViewportController(this);
+        this.getScreenContainer();
         
         // 初始化子系统
         this.behaviorSystem = new BehaviorSystem(this);
@@ -235,9 +247,6 @@ export class GameEngine {
             // 更新补间动画系统
             this.tweenSystem.update(deltaTime);
             
-            // 更新输入管理器（清除一次性状态）
-            this.inputManager.update();
-
             if (this.cameraManager) {
                 this.cameraManager.update(deltaTime);
             }
@@ -331,9 +340,7 @@ export class GameEngine {
         // 设置交互
         this.setupInteraction(gameObject);
         
-        // 添加到viewport（如果存在）或stage
-        const container = this.viewportController ? this.viewportController.viewport : this.app.stage;
-        container.addChild(gameObject.displayObject);
+        this.getWorldContainer().addChild(gameObject.displayObject);
         this.gameObjects.push(gameObject);
 
         if (this.layerManager) {
@@ -456,23 +463,32 @@ export class GameEngine {
         
         // 添加可视化指示器（容器本身不可见）
         const indicator = new PIXI.Graphics();
+        container.addChild(indicator);
+        container._sgeContainerIndicator = indicator;
+        this.redrawContainerIndicator(container, props);
+
+        devLog('创建容器:', props.x, props.y);
+        return container;
+    }
+
+    redrawContainerIndicator(container, props) {
+        const indicator = container._sgeContainerIndicator;
+        if (!indicator) return;
+
+        const w = Math.max(10, props.width || 100);
+        const h = Math.max(10, props.height || 100);
+        indicator.clear();
         indicator.lineStyle(2, 0x9b59b6, 0.5);
-        indicator.drawRect(-5, -5, 110, 110);
+        indicator.drawRect(0, 0, w, h);
         indicator.lineStyle(0);
         indicator.beginFill(0x9b59b6, 0.1);
-        indicator.drawRect(-5, -5, 110, 110);
+        indicator.drawRect(0, 0, w, h);
         indicator.endFill();
         indicator.beginFill(0x9b59b6);
         indicator.drawCircle(0, 0, 5);
         indicator.endFill();
-        
-        // 设置hitArea使容器可点击和拖拽
-        container.hitArea = new PIXI.Rectangle(-5, -5, 110, 110);
-        
-        container.addChild(indicator);
-        
-        devLog('创建容器:', props.x, props.y);
-        return container;
+
+        container.hitArea = new PIXI.Rectangle(0, 0, w, h);
     }
     
     /**
@@ -546,9 +562,7 @@ export class GameEngine {
         
         parentObject.displayObject.removeChild(childObject.displayObject);
         
-        // 添加回viewport或stage
-        const container = this.viewportController ? this.viewportController.viewport : this.app.stage;
-        container.addChild(childObject.displayObject);
+        this.getWorldContainer().addChild(childObject.displayObject);
         
         // 设置世界坐标
         childObject.displayObject.x = worldPos.x;
@@ -630,12 +644,34 @@ export class GameEngine {
         c.hitArea = new PIXI.Rectangle(0, 0, w, h);
         gameObject._buttonLabel = label;
         gameObject._buttonBg = bg;
+        gameObject._buttonClicked = false;
+        gameObject._buttonDown = false;
+        gameObject._buttonHover = false;
         const engine = this;
-        c.on('pointerover', () => applyState('hover'));
-        c.on('pointerout', () => applyState('normal'));
-        c.on('pointerdown', () => applyState('down'));
-        c.on('pointerup', () => applyState(engine.isRunning ? 'hover' : 'normal'));
-        c.on('pointerupoutside', () => applyState('normal'));
+        c.on('pointerover', () => {
+            gameObject._buttonHover = true;
+            applyState('hover');
+        });
+        c.on('pointerout', () => {
+            gameObject._buttonHover = false;
+            gameObject._buttonDown = false;
+            applyState('normal');
+        });
+        c.on('pointerdown', () => {
+            gameObject._buttonDown = true;
+            applyState('down');
+        });
+        c.on('pointertap', () => {
+            gameObject._buttonClicked = true;
+        });
+        c.on('pointerup', () => {
+            gameObject._buttonDown = false;
+            applyState(engine.isRunning ? 'hover' : 'normal');
+        });
+        c.on('pointerupoutside', () => {
+            gameObject._buttonDown = false;
+            applyState('normal');
+        });
         return c;
     }
 
@@ -972,6 +1008,10 @@ export class GameEngine {
      */
     updateObjectProperties(gameObject, properties) {
         const obj = gameObject.displayObject;
+
+        if (properties.name !== undefined) {
+            gameObject.properties.name = properties.name;
+        }
         
         if (properties.x !== undefined) {
             obj.x = properties.x;
@@ -1055,9 +1095,17 @@ export class GameEngine {
         }
 
         if (gameObject.type === 'button') {
+            if (properties.label !== undefined) gameObject.properties.label = properties.label;
+            if (properties.fontSize !== undefined) gameObject.properties.fontSize = properties.fontSize;
+            if (properties.fontFamily !== undefined) gameObject.properties.fontFamily = properties.fontFamily;
+            if (properties.colorText !== undefined) gameObject.properties.colorText = properties.colorText;
+            if (properties.width !== undefined) gameObject.properties.width = properties.width;
+            if (properties.height !== undefined) gameObject.properties.height = properties.height;
+            if (properties.disabled !== undefined) gameObject.properties.disabled = properties.disabled;
             if (gameObject._buttonLabel) {
                 if (properties.label !== undefined) gameObject._buttonLabel.text = properties.label;
                 if (properties.fontSize !== undefined) gameObject._buttonLabel.style.fontSize = properties.fontSize;
+                if (properties.fontFamily !== undefined) gameObject._buttonLabel.style.fontFamily = properties.fontFamily || 'Arial';
                 if (properties.colorText !== undefined) gameObject._buttonLabel.style.fill = properties.colorText;
             }
             if (properties.width !== undefined || properties.height !== undefined || properties.disabled !== undefined) {
@@ -1075,6 +1123,14 @@ export class GameEngine {
             }
             if (properties.width !== undefined || properties.height !== undefined) {
                 this.redrawInputField(gameObject);
+            }
+        }
+
+        if (gameObject.type === 'container') {
+            if (properties.width !== undefined) gameObject.properties.width = properties.width;
+            if (properties.height !== undefined) gameObject.properties.height = properties.height;
+            if (properties.width !== undefined || properties.height !== undefined) {
+                this.redrawContainerIndicator(gameObject.displayObject, gameObject.properties);
             }
         }
 
@@ -1137,7 +1193,7 @@ export class GameEngine {
     /**
      * 删除对象
      */
-    removeGameObject(gameObject) {
+    removeGameObject(gameObject, saveHistory = true) {
         const index = this.gameObjects.indexOf(gameObject);
         if (index > -1) {
             const parent = gameObject.displayObject.parent;
@@ -1152,8 +1208,14 @@ export class GameEngine {
             if (this.transformControls.selectedObject === gameObject) {
                 this.transformControls.hide();
             }
+            if (this.selectionManager) {
+                this.selectionManager.removeFromSelection(gameObject);
+            }
+            this.removePlatformerBehavior(gameObject);
             
-            this.historyManager.saveState('删除对象');
+            if (saveHistory) {
+                this.historyManager.saveState('删除对象');
+            }
         }
     }
     
@@ -1182,7 +1244,8 @@ export class GameEngine {
      * 开始运行
      */
     play() {
-        // 保存初始状态
+        // 保存完整工程快照，停止游玩时整体恢复，避免运行逻辑污染编辑器数据。
+        this.playSnapshot = JSON.parse(JSON.stringify(this.exportScene()));
         this.saveInitialStates();
 
         if (this.cameraManager) {
@@ -1235,7 +1298,8 @@ export class GameEngine {
     /**
      * 停止运行
      */
-    stop() {
+    async stop() {
+        if (!this.isRunning && !this.playSnapshot) return;
         this.isRunning = false;
 
         if (this.cameraManager) {
@@ -1257,8 +1321,13 @@ export class GameEngine {
         // 清空平台角色行为
         this.platformerBehaviors = [];
         
-        // 恢复初始状态
-        this.restoreInitialStates();
+        const snapshot = this.playSnapshot;
+        this.playSnapshot = null;
+        if (snapshot) {
+            await this.importScene(snapshot, false);
+        } else {
+            this.restoreInitialStates();
+        }
         
         // 恢复对象交互
         this.gameObjects.forEach(obj => {
@@ -1436,7 +1505,7 @@ export class GameEngine {
     /**
      * 导入场景数据（异步加载贴图；支持多场景工程格式）
      */
-    async importScene(sceneData) {
+    async importScene(sceneData, saveHistory = true) {
         if (!sceneData) {
             throw new Error('无效的场景数据');
         }
@@ -1460,7 +1529,9 @@ export class GameEngine {
             } else {
                 await this.importScenePayload(sceneData);
             }
-            this.historyManager.saveState('导入场景');
+            if (saveHistory) {
+                this.historyManager.saveState('导入场景');
+            }
             return;
         }
 
@@ -1469,7 +1540,9 @@ export class GameEngine {
         }
 
         await this.importScenePayload(sceneData);
-        this.historyManager.saveState('导入场景');
+        if (saveHistory) {
+            this.historyManager.saveState('导入场景');
+        }
     }
     
     /**

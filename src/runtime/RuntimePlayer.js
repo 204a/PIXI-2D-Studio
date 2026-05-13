@@ -21,15 +21,23 @@ export class RuntimePlayer {
         return this.world || this.app.stage;
     }
 
+    getScreenContainer() {
+        return this.screen || this.app.stage;
+    }
+
     constructor(containerId) {
         this.containerId = containerId;
         this.app = null;
         this.world = null;
+        this.screen = null;
         this.gameObjects = [];
         this.selectedObject = null;
         this.isRunning = true;
         this.initialStates = [];
         this.cameraManager = null;
+        this.sceneData = null;
+        this.activeSceneId = null;
+        this._isSwitchingScene = false;
 
         // 系统
         this.behaviorSystem = new BehaviorSystem(this);
@@ -45,8 +53,40 @@ export class RuntimePlayer {
     }
 
     async start(sceneData) {
-        await this._initPixi();
+        this.sceneData = sceneData;
+        this.activeSceneId = sceneData.activeSceneId || 'main';
+        await this._initPixi(sceneData.project || {});
         this.cameraManager = new CameraManager(this);
+        await this._loadScenePayload(this._resolveScenePayload(this.activeSceneId, true) || sceneData, false);
+        this._installTicker();
+        this.behaviorSystem.start();
+    }
+
+    _resolveScenePayload(sceneId, allowFallback = false) {
+        const saved = this.sceneData?.savedScenes;
+        if (!Array.isArray(saved) || saved.length === 0) return null;
+        const entry = saved.find((s) => s.id === sceneId || s.name === sceneId) || (allowFallback ? saved[0] : null);
+        return entry?.data || null;
+    }
+
+    _clearRuntimeScene() {
+        this.gameObjects.forEach((obj) => {
+            if (obj.displayObject?.parent) obj.displayObject.parent.removeChild(obj.displayObject);
+        });
+        this.gameObjects = [];
+        this.platformerBehaviors = [];
+        this.tweenSystem.clear();
+        if (this.particleSystem) this.particleSystem.clear();
+        this.animationSystem.reset();
+    }
+
+    async _loadScenePayload(sceneData, restartSystems = true) {
+        if (restartSystems) {
+            this.behaviorSystem.stop();
+            if (this.physicsSystem) this.physicsSystem.stop();
+            this._clearRuntimeScene();
+        }
+
         this.cameraManager.import(sceneData.camera || {});
         if (sceneData.project) {
             const ps = sceneData.project;
@@ -59,7 +99,6 @@ export class RuntimePlayer {
             this.animationSystem.import(sceneData.animations);
         }
         this._buildObjects(sceneData);
-        // 还原对象动画
         this.gameObjects.forEach((obj) => {
             if (obj.type === 'sprite' && obj.properties.animationName) {
                 this.animationSystem.addAnimationToObject(obj, obj.properties.animationName, {
@@ -71,28 +110,35 @@ export class RuntimePlayer {
         this._restoreParenting(sceneData);
         LayerManager.assignZOrder(this.gameObjects, sceneData.layers || { layers: [{ id: 'layer_default' }] });
         this._setupPlatformerBehaviors();
-
-        // 启动物理系统（Matter.js）
-        if (this.physicsSystem) {
-            this.physicsSystem.start();
-        }
-
-        if (sceneData.behaviors) {
-            this.behaviorSystem.import(sceneData.behaviors);
-        }
-
+        if (this.physicsSystem) this.physicsSystem.start();
+        this.behaviorSystem.import(sceneData.behaviors || { behaviors: [] });
         this.particleSystem = new ParticleSystem(this);
 
-        this._installTicker();
-        this.behaviorSystem.start();
+        if (restartSystems) {
+            this.behaviorSystem.start();
+        }
     }
 
-    async _initPixi() {
+    async switchScene(sceneId) {
+        if (this._isSwitchingScene) return;
+        const payload = this._resolveScenePayload(sceneId);
+        if (!payload) return;
+
+        this._isSwitchingScene = true;
+        try {
+            this.activeSceneId = sceneId;
+            await this._loadScenePayload(payload, true);
+        } finally {
+            this._isSwitchingScene = false;
+        }
+    }
+
+    async _initPixi(project = {}) {
         const root = document.getElementById(this.containerId);
         if (!root) throw new Error('找不到容器: ' + this.containerId);
 
-        const w = root.clientWidth || window.innerWidth;
-        const h = root.clientHeight || window.innerHeight;
+        const w = Math.max(1, Number(project.designWidth) || 800);
+        const h = Math.max(1, Number(project.designHeight) || 600);
 
         try {
             this.app = new PIXI.Application();
@@ -121,19 +167,30 @@ export class RuntimePlayer {
 
         const canvas = this.app.view || this.app.canvas;
         root.appendChild(canvas);
-        canvas.style.width = '100%';
-        canvas.style.height = '100%';
         canvas.style.display = 'block';
+        root.style.display = 'flex';
+        root.style.alignItems = 'center';
+        root.style.justifyContent = 'center';
+        root.style.overflow = 'hidden';
 
         this.world = new PIXI.Container();
         this.world.sortableChildren = true;
         this.app.stage.addChild(this.world);
 
-        window.addEventListener('resize', () => {
+        this.screen = new PIXI.Container();
+        this.screen.sortableChildren = true;
+        this.app.stage.addChild(this.screen);
+
+        const fitCanvas = () => {
             const ww = root.clientWidth || window.innerWidth;
             const hh = root.clientHeight || window.innerHeight;
-            this.app.renderer.resize(ww, hh);
-        });
+            // 运行坐标仍使用项目设计尺寸，但显示尺寸根据窗口等比自适应。
+            const scale = Math.min(ww / w, hh / h);
+            canvas.style.width = `${Math.floor(w * scale)}px`;
+            canvas.style.height = `${Math.floor(h * scale)}px`;
+        };
+        fitCanvas();
+        window.addEventListener('resize', fitCanvas);
     }
 
     async _loadResources(sceneData) {
@@ -157,6 +214,7 @@ export class RuntimePlayer {
 
     _buildObjects(sceneData) {
         this.gameObjects = [];
+        this._runtimeLayers = sceneData.layers?.layers || [{ id: 'layer_default' }];
         const objects = sceneData.objects || [];
         for (const objData of objects) {
             const obj = this.createGameObject(objData.type, objData.properties, false);
@@ -224,7 +282,6 @@ export class RuntimePlayer {
         }
 
         this.tweenSystem.update(deltaTime);
-        this.inputManager.update();
 
         if (this.cameraManager && this.world) {
             this.cameraManager.updateRuntimeFollow(deltaTime, this.world);
@@ -242,6 +299,17 @@ export class RuntimePlayer {
     removePlatformerBehavior(gameObject) {
         const index = this.platformerBehaviors.findIndex(b => b.gameObject === gameObject);
         if (index > -1) this.platformerBehaviors.splice(index, 1);
+    }
+
+    removeGameObject(gameObject) {
+        const index = this.gameObjects.indexOf(gameObject);
+        if (index === -1) return;
+
+        if (gameObject.displayObject?.parent) {
+            gameObject.displayObject.parent.removeChild(gameObject.displayObject);
+        }
+        this.removePlatformerBehavior(gameObject);
+        this.gameObjects.splice(index, 1);
     }
 
     // 运行态无需交互
@@ -369,7 +437,9 @@ export class RuntimePlayer {
                 return null;
         }
 
-        const container = this.world || this.app.stage;
+        const layerId = gameObject.properties.layerId || 'layer_default';
+        const layer = this._runtimeLayers?.find((l) => l.id === layerId);
+        const container = layer?.fixed ? this.getScreenContainer() : this.getWorldContainer();
         container.addChild(gameObject.displayObject);
         this.gameObjects.push(gameObject);
         return gameObject;
@@ -491,11 +561,33 @@ export class RuntimePlayer {
         c.eventMode = 'static';
         gameObject._buttonLabel = label;
         gameObject._buttonBg = bg;
-        c.on('pointerover', () => applyState('hover'));
-        c.on('pointerout', () => applyState('normal'));
-        c.on('pointerdown', () => applyState('down'));
-        c.on('pointerup', () => applyState('hover'));
-        c.on('pointerupoutside', () => applyState('normal'));
+        gameObject._buttonClicked = false;
+        gameObject._buttonDown = false;
+        gameObject._buttonHover = false;
+        c.on('pointerover', () => {
+            gameObject._buttonHover = true;
+            applyState('hover');
+        });
+        c.on('pointerout', () => {
+            gameObject._buttonHover = false;
+            gameObject._buttonDown = false;
+            applyState('normal');
+        });
+        c.on('pointerdown', () => {
+            gameObject._buttonDown = true;
+            applyState('down');
+        });
+        c.on('pointertap', () => {
+            gameObject._buttonClicked = true;
+        });
+        c.on('pointerup', () => {
+            gameObject._buttonDown = false;
+            applyState('hover');
+        });
+        c.on('pointerupoutside', () => {
+            gameObject._buttonDown = false;
+            applyState('normal');
+        });
         return c;
     }
 

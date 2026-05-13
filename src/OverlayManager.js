@@ -3,12 +3,17 @@
  * 对齐辅助改用场景内固定网格（GridSystem），不再使用拖拽参考线。
  */
 
+import * as PIXI from 'pixi.js';
+
 export class OverlayManager {
     constructor(engine) {
         this.engine = engine;
         this.enabledRuler = true;
+        this.enabledPlayViewportFrame = true;
+        this.playViewportFrame = null;
 
         this._initDom();
+        this._initPlayViewportFrame();
         this.update();
     }
 
@@ -19,6 +24,19 @@ export class OverlayManager {
 
         if (this.canvasTop) this.canvasTop.style.pointerEvents = 'auto';
         if (this.canvasLeft) this.canvasLeft.style.pointerEvents = 'auto';
+    }
+
+    _initPlayViewportFrame() {
+        const parent = this.engine.viewportController
+            ? this.engine.viewportController.viewport
+            : this.engine.app.stage;
+        if (!parent) return;
+
+        this.playViewportFrame = new PIXI.Graphics();
+        this.playViewportFrame.eventMode = 'none';
+        this.playViewportFrame.zIndex = 999999;
+        parent.sortableChildren = true;
+        parent.addChild(this.playViewportFrame);
     }
 
     setRulerEnabled(v) {
@@ -43,8 +61,48 @@ export class OverlayManager {
      */
     update() {
         this._syncVisibility();
-        if (!this.enabledRuler) return;
-        this._drawRulers();
+        this._drawPlayViewportFrame();
+        if (this.enabledRuler) {
+            this._drawRulers();
+        }
+    }
+
+    _drawPlayViewportFrame() {
+        if (!this.playViewportFrame) return;
+
+        const g = this.playViewportFrame;
+        g.clear();
+        g.visible = !!this.enabledPlayViewportFrame;
+        if (!g.visible) return;
+
+        const ps = this.engine.projectSettings || {};
+        const w = Math.max(1, Number(ps.designWidth) || 800);
+        const h = Math.max(1, Number(ps.designHeight) || 600);
+        const scale = this.engine.viewportController?.scale || 1;
+        const lw = 2 / scale;
+        const tick = 14 / scale;
+
+        // 运行时可见范围：左上角为世界坐标 (0,0)，大小来自项目设计宽高。
+        g.lineStyle(lw, 0xffc107, 0.95);
+        g.drawRect(0, 0, w, h);
+
+        g.lineStyle(lw, 0xfff3cd, 0.9);
+        g.moveTo(0, 0);
+        g.lineTo(tick, 0);
+        g.moveTo(0, 0);
+        g.lineTo(0, tick);
+        g.moveTo(w, 0);
+        g.lineTo(w - tick, 0);
+        g.moveTo(w, 0);
+        g.lineTo(w, tick);
+        g.moveTo(0, h);
+        g.lineTo(tick, h);
+        g.moveTo(0, h);
+        g.lineTo(0, h - tick);
+        g.moveTo(w, h);
+        g.lineTo(w - tick, h);
+        g.moveTo(w, h);
+        g.lineTo(w, h - tick);
     }
 
     _drawRulers() {

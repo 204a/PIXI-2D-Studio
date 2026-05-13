@@ -3,8 +3,17 @@ import { RuntimePlayer } from './runtime/RuntimePlayer.js';
 const STORAGE_KEY = 'sge.playableScene.v1';
 
 function goBack() {
-  // 返回编辑器首页
-  window.location.href = '/';
+  // 优先回到打开游玩页的原编辑器标签，避免重新加载一个空编辑器。
+  if (window.opener && !window.opener.closed) {
+    try {
+      window.opener.focus();
+      window.close();
+      return;
+    } catch {}
+  }
+
+  // Cursor 内置预览等环境可能隔离 opener：回到编辑器后用刚才的游玩快照恢复场景。
+  window.location.href = '/?restorePlayable=1';
 }
 
 function showEmpty(msg) {
