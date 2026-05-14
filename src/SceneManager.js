@@ -25,6 +25,7 @@ export class SceneManager {
         const next = this.scenes.get(sceneId);
         const payload = next.data || this.engine.getEmptySceneData();
         await this.engine.importScenePayload(payload);
+        this.engine.historyManager?.resetToCurrentScene('切换场景');
     }
 
     async addScene(name) {
@@ -38,6 +39,7 @@ export class SceneManager {
         this.scenes.set(id, { name: name || '新场景', data: null });
         this.activeSceneId = id;
         await this.engine.importScenePayload(this.engine.getEmptySceneData());
+        this.engine.historyManager?.resetToCurrentScene('新建场景');
         return id;
     }
 

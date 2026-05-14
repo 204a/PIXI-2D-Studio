@@ -26,6 +26,7 @@ export class PlatformerBehavior {
         this.velocityY = 0;
         this.isOnGround = false;
         this.canJump = true;
+        this._lastDeltaTime = 1 / 60;
 
         if (!this.gameObject.properties.facing) {
             this.gameObject.properties.facing = 'right';
@@ -60,6 +61,7 @@ export class PlatformerBehavior {
      */
     update(deltaTime, inputManager, platforms) {
         const dt = deltaTime;
+        this._lastDeltaTime = dt;
         
         // 水平移动
         if (inputManager.isKeyDown(this.keys.left)) {
@@ -87,6 +89,7 @@ export class PlatformerBehavior {
         }
         
         // 应用垂直速度
+        const prevY = this.gameObject.properties.y || 0;
         this.gameObject.properties.y += this.velocityY * dt;
         this.obj.y = this.gameObject.properties.y;
         
@@ -94,15 +97,12 @@ export class PlatformerBehavior {
         this.isOnGround = false;
         if (platforms) {
             platforms.forEach(platform => {
-                if (this.checkCollision(platform)) {
-                    // 站在平台上
-                    if (this.velocityY > 0) {
-                        const platformTop = platform.displayObject.y;
-                        this.gameObject.properties.y = platformTop - (this.gameObject.properties.height || 50);
-                        this.obj.y = this.gameObject.properties.y;
-                        this.velocityY = 0;
-                        this.isOnGround = true;
-                    }
+                const hit = this.checkCollision(platform, prevY);
+                if (hit && this.velocityY > 0) {
+                    this.gameObject.properties.y = hit.y;
+                    this.obj.y = this.gameObject.properties.y;
+                    this.velocityY = 0;
+                    this.isOnGround = true;
                 }
             });
         }
@@ -111,7 +111,7 @@ export class PlatformerBehavior {
     /**
      * 简单碰撞检测
      */
-    checkCollision(platform) {
+    checkCollision(platform, prevY = this.gameObject.properties.y || 0) {
         const props = this.gameObject.properties;
         const pProps = platform.properties;
         
@@ -119,16 +119,48 @@ export class PlatformerBehavior {
         const y1 = props.y || 0;
         const w1 = props.width || 50;
         const h1 = props.height || 50;
-        
+
         const x2 = pProps.x ?? platform.displayObject.x;
         const y2 = pProps.y ?? platform.displayObject.y;
         const w2 = pProps.width || 100;
         const h2 = pProps.height || 20;
-        
-        return x1 < x2 + w2 &&
-               x1 + w1 > x2 &&
-               y1 < y2 + h2 &&
-               y1 + h1 > y2;
+        const angle = ((pProps.rotation || 0) * Math.PI) / 180;
+
+        const footX = x1 + w1 / 2;
+        const footY = y1 + h1;
+        const prevFootY = prevY + h1;
+
+        const cur = this._worldToPlatformLocal(footX, footY, x2, y2, angle);
+        const prev = this._worldToPlatformLocal(footX, prevFootY, x2, y2, angle);
+
+        // 只处理从平台上方落到上表面的情况，避免从侧面/底部被吸到平台上。
+        const tolerance = Math.max(8, Math.abs(this.velocityY) * this._lastDeltaTime + 4);
+        const withinX = cur.x >= -w1 * 0.35 && cur.x <= w2 + w1 * 0.35;
+        const crossedTop = prev.y <= tolerance && cur.y >= -tolerance && cur.y <= h2 + tolerance;
+        if (!withinX || !crossedTop) return null;
+
+        const surface = this._platformLocalToWorld(cur.x, 0, x2, y2, angle);
+        return { y: surface.y - h1 };
+    }
+
+    _worldToPlatformLocal(x, y, platformX, platformY, angle) {
+        const dx = x - platformX;
+        const dy = y - platformY;
+        const c = Math.cos(-angle);
+        const s = Math.sin(-angle);
+        return {
+            x: dx * c - dy * s,
+            y: dx * s + dy * c
+        };
+    }
+
+    _platformLocalToWorld(x, y, platformX, platformY, angle) {
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        return {
+            x: platformX + x * c - y * s,
+            y: platformY + x * s + y * c
+        };
     }
 }
 

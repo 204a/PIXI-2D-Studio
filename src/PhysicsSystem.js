@@ -3,7 +3,7 @@ import Matter from 'matter-js';
 /**
  * Matter.js 最小物理系统：
  * - 仅支持矩形/圆形刚体（像素单位）
- * - 固定角度（避免 Pixi 以左上角为旋转中心导致的视觉偏移）
+ * - 支持对象初始旋转；默认固定角速度，避免碰撞后不可控自转
  * - 记录 collisionStart 作为 “物理碰撞进入”
  */
 export class PhysicsSystem {
@@ -81,6 +81,41 @@ export class PhysicsSystem {
         }
     }
 
+    _shapeInfo(gameObject) {
+        const props = gameObject.properties || {};
+        const shape = props.rigidShape || props.collisionShape || (gameObject.type === 'circle' ? 'circle' : 'rect');
+        if (shape === 'circle') {
+            const r = props.radius || Math.max(1, Math.min(props.width || 0, props.height || 0) / 2) || 20;
+            return { shape, width: r * 2, height: r * 2, radius: r };
+        }
+        return {
+            shape,
+            width: Math.max(1, props.width || 50),
+            height: Math.max(1, props.height || 50),
+            radius: 0
+        };
+    }
+
+    _centerFromTopLeft(props, width, height, angle) {
+        const x = props.x || 0;
+        const y = props.y || 0;
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        return {
+            x: x + c * width / 2 - s * height / 2,
+            y: y + s * width / 2 + c * height / 2
+        };
+    }
+
+    _topLeftFromCenter(cx, cy, width, height, angle) {
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        return {
+            x: cx - c * width / 2 + s * height / 2,
+            y: cy - s * width / 2 - c * height / 2
+        };
+    }
+
     _createBodyFor(gameObject) {
         const props = gameObject.properties || {};
 
@@ -94,29 +129,29 @@ export class PhysicsSystem {
         const restitution =
             typeof props.rigidRestitution === 'number' ? props.rigidRestitution : 0.0;
         const density = typeof props.rigidDensity === 'number' ? props.rigidDensity : 0.001;
+        const frictionAir =
+            typeof props.rigidFrictionAir === 'number' ? props.rigidFrictionAir : 0;
+        const angle = ((Number(props.rotation) || 0) * Math.PI) / 180;
 
-        const shape = props.rigidShape || props.collisionShape || (gameObject.type === 'circle' ? 'circle' : 'rect');
+        const info = this._shapeInfo(gameObject);
+        const center = this._centerFromTopLeft(props, info.width, info.height, angle);
 
         const bodyOpts = {
             isStatic,
             friction,
             frictionStatic,
             restitution,
-            density
+            density,
+            frictionAir,
+            // 默认 slop 偏大时，小物体弹跳会被接触修正吃掉一部分能量。
+            slop: 0.01
         };
 
         let body = null;
-        if (shape === 'circle') {
-            const r = props.radius || Math.max(1, Math.min(props.width || 0, props.height || 0) / 2) || 20;
-            const cx = (props.x || 0) + r;
-            const cy = (props.y || 0) + r;
-            body = Matter.Bodies.circle(cx, cy, r, bodyOpts);
+        if (info.shape === 'circle') {
+            body = Matter.Bodies.circle(center.x, center.y, info.radius, bodyOpts);
         } else {
-            const w = Math.max(1, props.width || 50);
-            const h = Math.max(1, props.height || 50);
-            const cx = (props.x || 0) + w / 2;
-            const cy = (props.y || 0) + h / 2;
-            body = Matter.Bodies.rectangle(cx, cy, w, h, bodyOpts);
+            body = Matter.Bodies.rectangle(center.x, center.y, info.width, info.height, bodyOpts);
         }
 
         if (!body) return null;
@@ -125,9 +160,9 @@ export class PhysicsSystem {
         body.plugin = body.plugin || {};
         body.plugin.gameObjectId = gameObject.id;
 
-        // 最小版：固定角度，避免 Pixi 左上角旋转中心导致偏移
+        // 保留用户设置的初始角度，但固定角速度，避免碰撞后不断自转。
         Matter.Body.setInertia(body, Infinity);
-        Matter.Body.setAngle(body, 0);
+        Matter.Body.setAngle(body, angle);
 
         return body;
     }
@@ -164,21 +199,19 @@ export class PhysicsSystem {
             if (!obj?.displayObject) continue;
             const props = obj.properties || {};
 
-            const shape = props.rigidShape || props.collisionShape || (obj.type === 'circle' ? 'circle' : 'rect');
+            const info = this._shapeInfo(obj);
             const disp = obj.displayObject;
-            if (shape === 'circle') {
-                const r = props.radius || body.circleRadius || 20;
-                disp.x = body.position.x - r;
-                disp.y = body.position.y - r;
-            } else {
-                const w = Math.max(1, props.width || 50);
-                const h = Math.max(1, props.height || 50);
-                disp.x = body.position.x - w / 2;
-                disp.y = body.position.y - h / 2;
+            if (disp.pivot?.set) {
+                disp.pivot.set(info.width / 2, info.height / 2);
             }
+            disp.x = body.position.x;
+            disp.y = body.position.y;
+            disp.rotation = body.angle;
 
-            props.x = disp.x;
-            props.y = disp.y;
+            const topLeft = this._topLeftFromCenter(body.position.x, body.position.y, info.width, info.height, body.angle);
+            props.x = topLeft.x;
+            props.y = topLeft.y;
+            props.rotation = (body.angle * 180) / Math.PI;
         }
     }
 
